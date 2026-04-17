@@ -20,7 +20,7 @@ dependencies = [
 [project.optional-dependencies]
 video = ["opencv-python>=4.10", "numpy>=1.26"]
 ocr = ["pytesseract>=0.3.13"]
-ai = ["anthropic>=1.0.0"]
+ai = ["anthropic>=0.90.0"]
 tray = ["pystray>=0.19"]
 all = [
     "opencv-python>=4.10",
