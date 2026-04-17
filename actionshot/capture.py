@@ -1,7 +1,20 @@
-"""Screenshot capture with visual annotations."""
+"""Screenshot capture with visual annotations. Uses mss for fast capture."""
 
-import pyautogui
+import math
+
+import mss
+import mss.tools
 from PIL import Image, ImageDraw, ImageFont
+
+# Reusable mss instance (thread-safe per-thread via __enter__)
+_sct = None
+
+
+def _get_sct():
+    global _sct
+    if _sct is None:
+        _sct = mss.mss()
+    return _sct
 
 
 def _get_font(size: int = 16):
@@ -11,8 +24,20 @@ def _get_font(size: int = 16):
         return ImageFont.load_default()
 
 
-def take_screenshot():
-    return pyautogui.screenshot()
+def take_screenshot() -> Image.Image:
+    """Capture full screen using mss (much faster than pyautogui)."""
+    sct = _get_sct()
+    monitor = sct.monitors[0]  # all monitors combined
+    raw = sct.grab(monitor)
+    return Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
+
+
+def take_screenshot_region(x: int, y: int, width: int, height: int) -> Image.Image:
+    """Capture a specific screen region."""
+    sct = _get_sct()
+    region = {"left": x, "top": y, "width": width, "height": height}
+    raw = sct.grab(region)
+    return Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
 
 
 def annotate_click(screenshot: Image.Image, x: int, y: int, action: str = "click") -> Image.Image:
@@ -22,18 +47,14 @@ def annotate_click(screenshot: Image.Image, x: int, y: int, action: str = "click
     font = _get_font(16)
 
     radius = 20
-    # Outer circle
     draw.ellipse(
         [x - radius, y - radius, x + radius, y + radius],
         outline="red", width=3,
     )
-    # Inner dot
     draw.ellipse([x - 4, y - 4, x + 4, y + 4], fill="red")
-    # Crosshair
     draw.line([x - radius - 5, y, x + radius + 5, y], fill="red", width=1)
     draw.line([x, y - radius - 5, x, y + radius + 5], fill="red", width=1)
 
-    # Coordinate label
     label = f"{action} ({x}, {y})"
     label_x = x + radius + 8
     label_y = y - 10
@@ -60,7 +81,6 @@ def annotate_scroll(screenshot: Image.Image, x: int, y: int, direction: str = "d
         draw.line([x, y - arrow_len, x, y + arrow_len], fill=color, width=3)
         draw.polygon([(x, y - arrow_len - 8), (x - 8, y - arrow_len + 4), (x + 8, y - arrow_len + 4)], fill=color)
 
-    # Coordinate label
     label = f"scroll {direction} ({x}, {y})"
     label_x = x + 15
     label_y = y - 10
@@ -79,16 +99,11 @@ def annotate_drag(screenshot: Image.Image, sx: int, sy: int, ex: int, ey: int) -
 
     color = "#FF6600"
 
-    # Dashed-style line (solid for simplicity)
     draw.line([sx, sy, ex, ey], fill=color, width=3)
 
-    # Start circle (green)
     draw.ellipse([sx - 8, sy - 8, sx + 8, sy + 8], fill="#00CC00", outline="white", width=2)
-    # End circle (red)
     draw.ellipse([ex - 8, ey - 8, ex + 8, ey + 8], fill="#CC0000", outline="white", width=2)
 
-    # Arrow head at end
-    import math
     angle = math.atan2(ey - sy, ex - sx)
     arrow_size = 12
     ax1 = ex - arrow_size * math.cos(angle - 0.4)
@@ -97,13 +112,11 @@ def annotate_drag(screenshot: Image.Image, sx: int, sy: int, ex: int, ey: int) -
     ay2 = ey - arrow_size * math.sin(angle + 0.4)
     draw.polygon([(ex, ey), (int(ax1), int(ay1)), (int(ax2), int(ay2))], fill=color)
 
-    # Start label
     start_label = f"start ({sx}, {sy})"
     bbox = draw.textbbox((sx + 12, sy - 8), start_label, font=font)
     draw.rectangle([bbox[0] - 2, bbox[1] - 2, bbox[2] + 2, bbox[3] + 2], fill="white", outline="#00CC00")
     draw.text((sx + 12, sy - 8), start_label, fill="#00CC00", font=font)
 
-    # End label
     end_label = f"end ({ex}, {ey})"
     bbox = draw.textbbox((ex + 12, ey - 8), end_label, font=font)
     draw.rectangle([bbox[0] - 2, bbox[1] - 2, bbox[2] + 2, bbox[3] + 2], fill="white", outline="#CC0000")
