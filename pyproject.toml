@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "actionshot"
+version = "0.1.0"
+description = "Record desktop interactions for AI-powered automation"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+dependencies = [
+    "pynput>=1.7.7",
+    "pyautogui>=0.9.54",
+    "Pillow>=11.0",
+    "pywinauto>=0.6.8",
+    "comtypes>=1.4",
+]
+
+[project.optional-dependencies]
+video = ["opencv-python>=4.10", "numpy>=1.26"]
+ocr = ["pytesseract>=0.3.13"]
+ai = ["anthropic>=1.0.0"]
+tray = ["pystray>=0.19"]
+all = [
+    "opencv-python>=4.10",
+    "numpy>=1.26",
+    "pytesseract>=0.3.13",
+    "anthropic>=1.0.0",
+    "pystray>=0.19",
+]
+
+[project.scripts]
+actionshot = "main:main"
+
+[tool.setuptools.packages.find]
+include = ["actionshot*"]
