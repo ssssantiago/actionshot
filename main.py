@@ -21,6 +21,8 @@ def cmd_record(args):
         enable_video=args.video,
         enable_ocr=not args.no_ocr,
         video_fps=args.fps,
+        image_format=args.format,
+        image_quality=args.quality,
     )
     try:
         recorder.start()
@@ -137,6 +139,8 @@ def main():
     rec.add_argument("--video", action="store_true", help="Also record video (MP4)")
     rec.add_argument("--no-ocr", action="store_true", help="Disable OCR text extraction")
     rec.add_argument("--fps", type=int, default=10, help="Video FPS (default: 10)")
+    rec.add_argument("--format", choices=["jpeg", "png"], default="jpeg", help="Image format (default: jpeg)")
+    rec.add_argument("--quality", type=int, default=85, help="JPEG quality 1-100 (default: 85)")
     rec.set_defaults(func=cmd_record)
 
     # replay
