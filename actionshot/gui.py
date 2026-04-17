@@ -56,97 +56,59 @@ except Exception:
 
 # ── Custom widgets ────────────────────────────────────────────────────
 
-class GlowButton(tk.Canvas):
-    """Custom button with hover glow effect."""
+class GlowButton(tk.Frame):
+    """Custom button with hover glow effect using Frame+Label."""
 
     def __init__(self, parent, text="", icon="", color=C["accent"],
                  hover_color=C["accent_hover"], text_color=C["white"],
                  command=None, width=160, height=42, font_size=11, **kw):
-        super().__init__(parent, width=width, height=height,
-                         bg=parent["bg"], highlightthickness=0, **kw)
+        kw.pop("bg", None)
+        super().__init__(parent, **kw)
 
-        self._text = text
-        self._icon = icon
         self._color = color
         self._hover_color = hover_color
         self._text_color = text_color
         self._command = command
-        self._w = width
-        self._h = height
         self._font_size = font_size
-        self._hovered = False
-        self._pressed = False
+        self._icon = icon
 
-        self._draw()
+        label_text = f"{icon}  {text}" if icon else text
 
-        self.bind("<Enter>", self._on_enter)
-        self.bind("<Leave>", self._on_leave)
-        self.bind("<ButtonPress-1>", self._on_press)
-        self.bind("<ButtonRelease-1>", self._on_release)
-
-    def _draw(self):
-        self.delete("all")
-        c = self._hover_color if self._hovered else self._color
-        r = 8  # corner radius
-
-        # Shadow
-        if self._hovered:
-            self._round_rect(2, 3, self._w - 2, self._h - 1, r, fill="#00000044", outline="")
-
-        # Button body
-        self._round_rect(0, 0, self._w - 2, self._h - 3, r, fill=c, outline="")
-
-        # Highlight line at top
-        if self._hovered:
-            self.create_line(r, 1, self._w - r - 2, 1, fill=self._hover_color, width=1)
-
-        # Text
-        label = f"{self._icon}  {self._text}" if self._icon else self._text
-        y_off = 1 if self._pressed else 0
-        self.create_text(
-            self._w // 2, self._h // 2 - 1 + y_off,
-            text=label, fill=self._text_color,
-            font=(FONT, self._font_size, "bold"),
+        self._label = tk.Label(
+            self, text=label_text, bg=color, fg=text_color,
+            font=(FONT, font_size, "bold"),
+            width=max(width // 10, 8), height=1,
+            padx=12, pady=6, cursor="hand2",
         )
+        self._label.pack(fill="both", expand=True)
 
-    def _round_rect(self, x1, y1, x2, y2, r, **kw):
-        points = [
-            x1 + r, y1, x2 - r, y1,
-            x2, y1, x2, y1 + r,
-            x2, y2 - r, x2, y2,
-            x2 - r, y2, x1 + r, y2,
-            x1, y2, x1, y2 - r,
-            x1, y1 + r, x1, y1,
-        ]
-        return self.create_polygon(points, smooth=True, **kw)
+        self._label.bind("<Enter>", self._on_enter)
+        self._label.bind("<Leave>", self._on_leave)
+        self._label.bind("<ButtonPress-1>", self._on_press)
+        self._label.bind("<ButtonRelease-1>", self._on_release)
 
     def _on_enter(self, e):
-        self._hovered = True
-        self._draw()
+        self._label.configure(bg=self._hover_color)
 
     def _on_leave(self, e):
-        self._hovered = False
-        self._pressed = False
-        self._draw()
+        self._label.configure(bg=self._color)
 
     def _on_press(self, e):
-        self._pressed = True
-        self._draw()
+        self._label.configure(bg=self._color)
 
     def _on_release(self, e):
-        self._pressed = False
-        self._draw()
-        if self._command and self._hovered:
+        self._label.configure(bg=self._hover_color)
+        if self._command:
             self._command()
 
     def set_text(self, text):
-        self._text = text
-        self._draw()
+        label_text = f"{self._icon}  {text}" if self._icon else text
+        self._label.configure(text=label_text)
 
     def set_color(self, color, hover_color=None):
         self._color = color
         self._hover_color = hover_color or color
-        self._draw()
+        self._label.configure(bg=color)
 
 
 class PulsingDot(tk.Canvas):
@@ -159,7 +121,7 @@ class PulsingDot(tk.Canvas):
         self._alpha = 1.0
         self._growing = False
         self._active = False
-        self._draw_idle()
+        self.after(10, self._draw_idle)
 
     def _draw_idle(self):
         self.delete("all")
