@@ -46,6 +46,7 @@ class TrayApp:
         self.recorder = None
         self.recording = False
         self.icon = None
+        self._step_updater = None
 
     def run(self):
         self.icon = pystray.Icon(
@@ -77,11 +78,15 @@ class TrayApp:
             def _record():
                 self.recorder.start()
                 self.recording = False
+                if self._step_updater:
+                    self._step_updater.cancel()
+                    self._step_updater = None
                 if self.icon:
                     self.icon.icon = _create_icon_image(False)
                     self.icon.title = "ActionShot - Ready"
 
             threading.Thread(target=_record, daemon=True).start()
+            self._start_step_counter()
         else:
             if self.recorder:
                 self.recorder.stop()
@@ -99,7 +104,23 @@ class TrayApp:
         from .gui import ActionShotGUI
         threading.Thread(target=lambda: ActionShotGUI().run(), daemon=True).start()
 
+    def _start_step_counter(self):
+        """Periodically update tray tooltip with step count."""
+        import threading
+
+        def _update():
+            if self.recording and self.recorder and self.recorder.session and self.icon:
+                count = self.recorder.session.step_count
+                self.icon.title = f"ActionShot - Recording ({count} steps)"
+                self._step_updater = threading.Timer(1.0, _update)
+                self._step_updater.daemon = True
+                self._step_updater.start()
+
+        _update()
+
     def _quit(self, icon=None, item=None):
+        if self._step_updater:
+            self._step_updater.cancel()
         if self.recording and self.recorder:
             self.recorder.stop()
         if self.icon:
