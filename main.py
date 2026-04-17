@@ -16,7 +16,12 @@ BANNER = """
 def cmd_record(args):
     from actionshot.recorder import Recorder
     print(BANNER)
-    recorder = Recorder(output_dir=args.output)
+    recorder = Recorder(
+        output_dir=args.output,
+        enable_video=args.video,
+        enable_ocr=not args.no_ocr,
+        video_fps=args.fps,
+    )
     try:
         recorder.start()
     except KeyboardInterrupt:
@@ -45,6 +50,75 @@ def cmd_ai(args):
         agent.generate_ai_prompt()
 
 
+def cmd_claude(args):
+    from actionshot.claude_api import ClaudeAutomator
+    automator = ClaudeAutomator(args.session, api_key=args.api_key)
+    if args.analyze:
+        automator.analyze_workflow()
+    else:
+        automator.generate_script(
+            include_screenshots=not args.no_screenshots,
+            max_screenshots=args.max_screenshots,
+        )
+
+
+def cmd_analyze(args):
+    from actionshot.patterns import PatternDetector
+    detector = PatternDetector(args.session)
+    detector.analyze()
+
+
+def cmd_diff(args):
+    from actionshot.diff import SessionDiff
+    differ = SessionDiff(args.session_a, args.session_b)
+    if args.json:
+        import os
+        output = os.path.join(args.session_a, "diff_report.json")
+        differ.compare(output_path=output)
+    else:
+        differ.print_diff()
+
+
+def cmd_export(args):
+    from actionshot.export import WorkflowExporter
+    exporter = WorkflowExporter(args.session)
+    if args.format == "n8n":
+        exporter.export_n8n()
+    elif args.format == "zapier":
+        exporter.export_zapier()
+    else:
+        exporter.export_n8n()
+        exporter.export_zapier()
+
+
+def cmd_schedule(args):
+    from actionshot.scheduler import Scheduler
+    sched = Scheduler()
+
+    if args.action == "add":
+        sched.add(
+            name=args.name,
+            script_path=args.script,
+            cron_expr=args.cron,
+            interval_minutes=args.interval,
+        )
+    elif args.action == "remove":
+        sched.remove(args.id)
+    elif args.action == "list":
+        sched.print_schedules()
+    elif args.action == "run":
+        try:
+            sched.run_daemon()
+        except KeyboardInterrupt:
+            sched.stop()
+
+
+def cmd_tray(args):
+    from actionshot.tray import TrayApp
+    app = TrayApp(output_dir=args.output)
+    app.run()
+
+
 def cmd_gui(args):
     from actionshot.gui import ActionShotGUI
     app = ActionShotGUI()
@@ -60,35 +134,86 @@ def main():
     # record
     rec = sub.add_parser("record", help="Start recording interactions")
     rec.add_argument("-o", "--output", default="recordings", help="Output directory")
+    rec.add_argument("--video", action="store_true", help="Also record video (MP4)")
+    rec.add_argument("--no-ocr", action="store_true", help="Disable OCR text extraction")
+    rec.add_argument("--fps", type=int, default=10, help="Video FPS (default: 10)")
     rec.set_defaults(func=cmd_record)
 
     # replay
     rep = sub.add_parser("replay", help="Replay a recorded session")
     rep.add_argument("session", help="Path to session folder")
-    rep.add_argument("-s", "--speed", type=float, default=1.0, help="Playback speed multiplier")
+    rep.add_argument("-s", "--speed", type=float, default=1.0, help="Playback speed")
     rep.add_argument("--dry-run", action="store_true", help="Print steps without executing")
     rep.set_defaults(func=cmd_replay)
 
     # generate
-    gen = sub.add_parser("generate", help="Generate a standalone Python script from a session")
+    gen = sub.add_parser("generate", help="Generate standalone Python script")
     gen.add_argument("session", help="Path to session folder")
     gen.add_argument("-o", "--output", default=None, help="Output script path")
     gen.set_defaults(func=cmd_generate)
 
     # ai
-    ai = sub.add_parser("ai", help="Generate AI prompt or API payload from a session")
+    ai = sub.add_parser("ai", help="Generate AI prompt or API payload")
     ai.add_argument("session", help="Path to session folder")
-    ai.add_argument("--export-api", action="store_true", help="Export as API payload instead of markdown")
-    ai.add_argument("--screenshots", action="store_true", help="Include screenshots in API payload")
+    ai.add_argument("--export-api", action="store_true", help="Export as API payload")
+    ai.add_argument("--screenshots", action="store_true", help="Include screenshots")
     ai.set_defaults(func=cmd_ai)
 
+    # claude
+    cl = sub.add_parser("claude", help="Send session to Claude API for automation")
+    cl.add_argument("session", help="Path to session folder")
+    cl.add_argument("--api-key", default=None, help="Anthropic API key (or set ANTHROPIC_API_KEY)")
+    cl.add_argument("--analyze", action="store_true", help="Get workflow analysis instead of script")
+    cl.add_argument("--no-screenshots", action="store_true", help="Don't send screenshots")
+    cl.add_argument("--max-screenshots", type=int, default=20, help="Max screenshots to send")
+    cl.set_defaults(func=cmd_claude)
+
+    # analyze
+    an = sub.add_parser("analyze", help="Detect patterns and loops in a session")
+    an.add_argument("session", help="Path to session folder")
+    an.set_defaults(func=cmd_analyze)
+
+    # diff
+    di = sub.add_parser("diff", help="Compare two sessions")
+    di.add_argument("session_a", help="First session path")
+    di.add_argument("session_b", help="Second session path")
+    di.add_argument("--json", action="store_true", help="Save as JSON instead of printing")
+    di.set_defaults(func=cmd_diff)
+
+    # export
+    ex = sub.add_parser("export", help="Export to n8n or Zapier workflow")
+    ex.add_argument("session", help="Path to session folder")
+    ex.add_argument("-f", "--format", choices=["n8n", "zapier", "both"], default="both")
+    ex.set_defaults(func=cmd_export)
+
+    # schedule
+    sc = sub.add_parser("schedule", help="Manage scheduled automation tasks")
+    sc_sub = sc.add_subparsers(dest="action")
+
+    sc_add = sc_sub.add_parser("add", help="Add a scheduled task")
+    sc_add.add_argument("name", help="Task name")
+    sc_add.add_argument("script", help="Path to Python script")
+    sc_add.add_argument("--cron", help='Schedule (e.g., "14:30" or "monday 09:00")')
+    sc_add.add_argument("--interval", type=int, help="Run every N minutes")
+
+    sc_sub.add_parser("list", help="List scheduled tasks")
+
+    sc_rm = sc_sub.add_parser("remove", help="Remove a scheduled task")
+    sc_rm.add_argument("id", type=int, help="Schedule ID")
+
+    sc_sub.add_parser("run", help="Start scheduler daemon")
+    sc.set_defaults(func=cmd_schedule)
+
+    # tray
+    tr = sub.add_parser("tray", help="Run in system tray")
+    tr.add_argument("-o", "--output", default="recordings", help="Output directory")
+    tr.set_defaults(func=cmd_tray)
+
     # gui
-    gui = sub.add_parser("gui", help="Launch the graphical interface")
-    gui.set_defaults(func=cmd_gui)
+    sub.add_parser("gui", help="Launch graphical interface").set_defaults(func=cmd_gui)
 
     args = parser.parse_args()
     if not args.command:
-        # Default: launch GUI
         cmd_gui(args)
     else:
         args.func(args)
