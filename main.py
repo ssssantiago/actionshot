@@ -15,19 +15,28 @@ BANNER = """
 
 def cmd_record(args):
     from actionshot.recorder import Recorder
+    from actionshot.config import load_config
     print(BANNER)
+
+    config = load_config(getattr(args, "config", None))
+
     recorder = Recorder(
-        output_dir=args.output,
-        enable_video=args.video,
-        enable_ocr=not args.no_ocr,
-        video_fps=args.fps,
-        image_format=args.format,
-        image_quality=args.quality,
+        output_dir=args.output or config["output_dir"],
+        enable_video=args.video or config["video"],
+        enable_ocr=not args.no_ocr and config["ocr"],
+        video_fps=args.fps or config["video_fps"],
+        image_format=args.format or config["image_format"],
+        image_quality=args.quality or config["image_quality"],
     )
     try:
         recorder.start()
     except KeyboardInterrupt:
         recorder.stop()
+
+
+def cmd_init(args):
+    from actionshot.config import create_default_config
+    create_default_config(args.path)
 
 
 def cmd_replay(args):
@@ -133,9 +142,15 @@ def main():
     )
     sub = parser.add_subparsers(dest="command")
 
+    # init
+    ini = sub.add_parser("init", help="Create default actionshot.yaml config file")
+    ini.add_argument("path", nargs="?", default=None, help="Config file path")
+    ini.set_defaults(func=cmd_init)
+
     # record
     rec = sub.add_parser("record", help="Start recording interactions")
     rec.add_argument("-o", "--output", default="recordings", help="Output directory")
+    rec.add_argument("-c", "--config", default=None, help="Path to actionshot.yaml")
     rec.add_argument("--video", action="store_true", help="Also record video (MP4)")
     rec.add_argument("--no-ocr", action="store_true", help="Disable OCR text extraction")
     rec.add_argument("--fps", type=int, default=10, help="Video FPS (default: 10)")
