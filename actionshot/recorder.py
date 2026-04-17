@@ -128,8 +128,10 @@ class Recorder:
             return
 
         if pressed:
+            # Capture coordinates on press (more accurate than release)
             self._drag_start = (x, y)
             self._drag_button = button
+            self._press_pos = (x, y)
         else:
             if self._drag_start:
                 sx, sy = self._drag_start
@@ -137,8 +139,11 @@ class Recorder:
                 if dist > self._DRAG_THRESHOLD:
                     self._record_drag(sx, sy, x, y, button)
                 else:
-                    self._record_click(x, y, button)
+                    # Use press coordinates — they're where the user intended to click
+                    px, py = self._press_pos
+                    self._record_click(px, py, button)
                 self._drag_start = None
+                self._press_pos = None
 
     def _record_click(self, x, y, button):
         self._flush_keys()
