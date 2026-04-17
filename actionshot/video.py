@@ -1,12 +1,11 @@
-"""Video recording - captures screen as MP4 alongside screenshots."""
+"""Video recording - captures screen as MP4 using mss (fast) + OpenCV."""
 
-import os
 import time
 import threading
 
 import cv2
 import numpy as np
-import pyautogui
+import mss
 
 
 class VideoRecorder:
@@ -42,33 +41,39 @@ class VideoRecorder:
             self._writer = None
 
     def _record_loop(self):
-        screen_size = pyautogui.size()
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        self._writer = cv2.VideoWriter(
-            self.output_path, fourcc, self.fps,
-            (screen_size.width, screen_size.height),
-        )
+        # Each thread needs its own mss instance
+        with mss.mss() as sct:
+            mon = sct.monitors[0]  # all monitors combined
+            width = mon["width"]
+            height = mon["height"]
 
-        interval = 1.0 / self.fps
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            self._writer = cv2.VideoWriter(
+                self.output_path, fourcc, self.fps, (width, height),
+            )
 
-        while self._running:
-            if self._paused:
-                time.sleep(0.1)
-                continue
+            interval = 1.0 / self.fps
 
-            start_t = time.perf_counter()
+            while self._running:
+                if self._paused:
+                    time.sleep(0.1)
+                    continue
 
-            try:
-                screenshot = pyautogui.screenshot()
-                frame = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
-                self._writer.write(frame)
-            except Exception:
-                pass
+                start_t = time.perf_counter()
 
-            elapsed = time.perf_counter() - start_t
-            sleep_time = interval - elapsed
-            if sleep_time > 0:
-                time.sleep(sleep_time)
+                try:
+                    raw = sct.grab(mon)
+                    frame = np.array(raw)
+                    # mss gives BGRA, OpenCV wants BGR
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+                    self._writer.write(frame)
+                except Exception:
+                    pass
+
+                elapsed = time.perf_counter() - start_t
+                sleep_time = interval - elapsed
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
 
         if self._writer:
             self._writer.release()
