@@ -6,8 +6,10 @@ Provides two entry points:
 """
 
 import base64
+import glob as glob_mod
 import json
 import os
+from pathlib import Path
 from typing import Any
 
 
@@ -91,141 +93,139 @@ rpakit.loop(fn, times=5)                          # repeat a callable N times
 
 
 # ---------------------------------------------------------------------------
-# Few-shot examples
+# Few-shot example loading from examples/ directory
 # ---------------------------------------------------------------------------
 
-_FEW_SHOT_EXAMPLES = """\
-## Examples
+# Location of curated examples (relative to this package)
+_EXAMPLES_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "examples")
 
-### Example 1 -- Fill a form and submit
 
-**IR (abbreviated):**
-```json
-{
-  "inputs": [{"name": "username", "type": "string", "example": "jdoe"}],
-  "steps": [
-    {"id": 1, "op": "open_app", "target": "MyApp - Login"},
-    {"id": 2, "op": "fill_field", "selector": {"primary": {"method": "uia_automation_id", "value": "txtUser"}}, "value": "$username"},
-    {"id": 3, "op": "fill_field", "selector": {"primary": {"method": "uia_automation_id", "value": "txtPass"}}, "value": "$password"},
-    {"id": 4, "op": "click", "selector": {"primary": {"method": "uia_automation_id", "value": "btnLogin"}}}
-  ]
-}
-```
+def _load_all_examples() -> list[dict]:
+    """Load all example pairs from the examples/ directory.
 
-**Generated script:**
-```python
-import rpakit
+    Each subdirectory must contain ``ir.json`` and ``script.py``.
+    Returns a list of dicts with keys: name, ir, ir_text, script, has_loop,
+    has_conditional, step_count, has_extract.
+    """
+    examples: list[dict] = []
+    if not os.path.isdir(_EXAMPLES_DIR):
+        return examples
 
-def run(username: str, password: str):
-    app = rpakit.connect(title="MyApp - Login")
+    for entry in sorted(os.listdir(_EXAMPLES_DIR)):
+        subdir = os.path.join(_EXAMPLES_DIR, entry)
+        ir_path = os.path.join(subdir, "ir.json")
+        script_path = os.path.join(subdir, "script.py")
+        if not os.path.isfile(ir_path) or not os.path.isfile(script_path):
+            continue
 
-    user_sel = rpakit.Selector(automation_id="txtUser")
-    pass_sel = rpakit.Selector(automation_id="txtPass")
-    login_sel = rpakit.Selector(automation_id="btnLogin")
+        with open(ir_path, "r", encoding="utf-8") as f:
+            ir_data = json.load(f)
+        with open(script_path, "r", encoding="utf-8") as f:
+            script_text = f.read()
 
-    rpakit.wait_for(user_sel, timeout_ms=5000)
-    rpakit.fill(user_sel, username)
+        ir_text = json.dumps(ir_data, indent=2, ensure_ascii=False)
 
-    rpakit.wait_for(pass_sel, timeout_ms=5000)
-    rpakit.fill(pass_sel, password)
+        # Extract features for similarity matching
+        ops = _collect_ops(ir_data.get("steps", []))
+        examples.append({
+            "name": entry,
+            "ir": ir_data,
+            "ir_text": ir_text,
+            "script": script_text,
+            "has_loop": "loop" in ops,
+            "has_conditional": "if_condition" in ops,
+            "has_extract": "extract_text" in ops,
+            "step_count": len(ir_data.get("steps", [])),
+        })
 
-    rpakit.wait_for(login_sel, timeout_ms=5000)
-    rpakit.click(login_sel)
+    return examples
 
-if __name__ == "__main__":
-    run(username="jdoe", password="secret")
-```
 
----
+def _collect_ops(steps: list[dict]) -> set[str]:
+    """Recursively collect all operation types from an IR step list."""
+    ops: set[str] = set()
+    for step in steps:
+        ops.add(step.get("op", ""))
+        for nested_key in ("body", "then_steps", "else_steps"):
+            nested = step.get(nested_key, [])
+            if nested:
+                ops.update(_collect_ops(nested))
+    return ops
 
-### Example 2 -- Loop over table rows
 
-**IR (abbreviated):**
-```json
-{
-  "inputs": [],
-  "steps": [
-    {"id": 1, "op": "open_app", "target": "Inventory Manager"},
-    {"id": 2, "op": "loop", "iterations": 5, "body": [
-      {"id": 3, "op": "click", "selector": {"tertiary": {"method": "ocr_anchor", "text": "Edit"}}},
-      {"id": 4, "op": "fill_field", "selector": {"primary": {"method": "uia_automation_id", "value": "qtyField"}}, "value": "0"},
-      {"id": 5, "op": "click", "selector": {"tertiary": {"method": "ocr_anchor", "text": "Save"}}}
-    ]}
-  ]
-}
-```
+def _select_examples(ir: dict, max_examples: int = 3) -> list[dict]:
+    """Select the most relevant examples by similarity to the target IR.
 
-**Generated script:**
-```python
-import rpakit
+    Similarity heuristic:
+      - +3 if loop presence matches
+      - +3 if conditional presence matches
+      - +2 if extract_text presence matches
+      - +1 if step count is within 3 of the target
+    """
+    all_examples = _load_all_examples()
+    if not all_examples:
+        return []
 
-def run():
-    app = rpakit.connect(title="Inventory Manager")
+    target_ops = _collect_ops(ir.get("steps", []))
+    target_has_loop = "loop" in target_ops
+    target_has_cond = "if_condition" in target_ops
+    target_has_extract = "extract_text" in target_ops
+    target_step_count = len(ir.get("steps", []))
 
-    def update_row():
-        edit_sel = rpakit.Selector(ocr_text="Edit")
-        qty_sel = rpakit.Selector(automation_id="qtyField")
-        save_sel = rpakit.Selector(ocr_text="Save")
+    scored: list[tuple[int, dict]] = []
+    for ex in all_examples:
+        score = 0
+        if ex["has_loop"] == target_has_loop:
+            score += 3
+        if ex["has_conditional"] == target_has_cond:
+            score += 3
+        if ex["has_extract"] == target_has_extract:
+            score += 2
+        if abs(ex["step_count"] - target_step_count) <= 3:
+            score += 1
+        scored.append((score, ex))
 
-        rpakit.wait_for(edit_sel, timeout_ms=5000)
-        rpakit.click(edit_sel)
+    # Sort descending by score, take top N
+    scored.sort(key=lambda t: t[0], reverse=True)
+    return [ex for _, ex in scored[:max_examples]]
 
-        rpakit.wait_for(qty_sel, timeout_ms=5000)
-        rpakit.fill(qty_sel, "0")
 
-        rpakit.wait_for(save_sel, timeout_ms=5000)
-        rpakit.click(save_sel)
+def _format_few_shot(ir: dict) -> str:
+    """Build the few-shot examples section by selecting relevant examples."""
+    examples = _select_examples(ir, max_examples=3)
+    if not examples:
+        # Fallback: no examples directory found
+        return ""
 
-    rpakit.loop(update_row, times=5)
+    parts = ["## Examples\n"]
+    for idx, ex in enumerate(examples, 1):
+        parts.append(f"### Example {idx} -- {ex['name']}\n")
+        parts.append(f"**IR:**\n```json\n{ex['ir_text']}\n```\n")
+        parts.append(f"**Generated script:**\n```python\n{ex['script']}\n```\n")
+        parts.append("---\n")
 
-if __name__ == "__main__":
-    run()
-```
+    return "\n".join(parts)
 
----
 
-### Example 3 -- Select from dropdown and copy result
+# ---------------------------------------------------------------------------
+# Assertion instructions for prompts
+# ---------------------------------------------------------------------------
 
-**IR (abbreviated):**
-```json
-{
-  "inputs": [{"name": "department", "type": "string", "example": "Engineering"}],
-  "steps": [
-    {"id": 1, "op": "open_app", "target": "HR Portal"},
-    {"id": 2, "op": "select_option", "selector": {"primary": {"method": "uia_automation_id", "value": "cboDept"}}, "option": "$department"},
-    {"id": 3, "op": "click", "selector": {"tertiary": {"method": "ocr_anchor", "text": "Search"}}},
-    {"id": 4, "op": "wait_for", "selector": {"primary": {"method": "uia_automation_id", "value": "resultsGrid"}}, "timeout_ms": 10000},
-    {"id": 5, "op": "extract_text", "selector": {"primary": {"method": "uia_automation_id", "value": "lblTotal"}}}
-  ]
-}
-```
+_ASSERTION_INSTRUCTIONS = """\
+## Assertions
 
-**Generated script:**
-```python
-import rpakit
+The IR includes an `assertions` list.  For each assertion, add a runtime
+validation in the generated script at the appropriate point:
 
-def run(department: str) -> str:
-    app = rpakit.connect(title="HR Portal")
+- **`field_has_value`**: After filling a field, read back its value with
+  `rpakit.get_attribute(sel, "Value")` and assert it matches the expected value.
+- **`element_visible`**: After a submit/save click, call `rpakit.wait_for(sel)`
+  to confirm the expected next element appeared.
+- **`output_not_empty`**: After extracting text, assert the result is truthy
+  (non-empty string).
 
-    dept_sel = rpakit.Selector(automation_id="cboDept")
-    rpakit.wait_for(dept_sel, timeout_ms=5000)
-    rpakit.select_option(dept_sel, department)
-
-    search_sel = rpakit.Selector(ocr_text="Search")
-    rpakit.wait_for(search_sel, timeout_ms=5000)
-    rpakit.click(search_sel)
-
-    grid_sel = rpakit.Selector(automation_id="resultsGrid")
-    rpakit.wait_for(grid_sel, timeout_ms=10000)
-
-    total_sel = rpakit.Selector(automation_id="lblTotal")
-    rpakit.wait_for(total_sel, timeout_ms=5000)
-    return rpakit.extract_text(total_sel)
-
-if __name__ == "__main__":
-    result = run(department="Engineering")
-    print("Total:", result)
-```
+If an assertion fails, raise a descriptive ``AssertionError`` with the step id
+and expected vs actual values.
 """
 
 
@@ -270,12 +270,17 @@ def generate_prompt(ir: dict, include_screenshots: bool = False) -> str:
     str
         The complete prompt ready to send to Claude Code.
     """
+    few_shot = _format_few_shot(ir)
     sections = [
         _SYSTEM_RULES,
         _SDK_REFERENCE,
-        _FEW_SHOT_EXAMPLES,
-        _format_ir_section(ir),
     ]
+    if few_shot:
+        sections.append(few_shot)
+    # Include assertion instructions when the IR has assertions
+    if ir.get("assertions"):
+        sections.append(_ASSERTION_INSTRUCTIONS)
+    sections.append(_format_ir_section(ir))
 
     if include_screenshots:
         sections.append(

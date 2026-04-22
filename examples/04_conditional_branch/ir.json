@@ -1,0 +1,76 @@
+{
+  "workflow_id": "verificar_prazo",
+  "description": "Check case deadline status and take action based on extracted value",
+  "inputs": [
+    {"name": "numero_processo", "type": "string", "example": "0001234-56.2024.8.26.0100"}
+  ],
+  "outputs": [{"name": "acao_tomada", "type": "string"}],
+  "steps": [
+    {"id": 1, "op": "open_app", "target": "Gestao de Prazos"},
+    {
+      "id": 2, "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtBuscaProcesso"},
+        "label": "Busca Processo", "control_type": "Edit"
+      },
+      "value": "$numero_processo"
+    },
+    {
+      "id": 3, "op": "click",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "btnBuscar"},
+        "label": "Buscar", "control_type": "Button"
+      }
+    },
+    {
+      "id": 4, "op": "wait_for",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "lblPrazo"},
+        "label": "Prazo", "control_type": "Text"
+      },
+      "timeout_ms": 8000
+    },
+    {
+      "id": 5, "op": "extract_text",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "lblPrazo"},
+        "label": "Prazo", "control_type": "Text"
+      },
+      "output": "prazo_status"
+    },
+    {
+      "id": 6, "op": "if_condition",
+      "condition": {"field": "prazo_status", "operator": "contains", "value": "Vencido"},
+      "then_steps": [
+        {
+          "id": 7, "op": "click",
+          "selector": {
+            "primary": {"method": "uia_automation_id", "value": "btnSolicitarUrgencia"},
+            "label": "Solicitar Urgencia", "control_type": "Button"
+          }
+        },
+        {
+          "id": 8, "op": "click",
+          "selector": {
+            "primary": {"method": "uia_automation_id", "value": "btnConfirmar"},
+            "label": "Confirmar", "control_type": "Button"
+          }
+        }
+      ],
+      "else_steps": [
+        {
+          "id": 9, "op": "click",
+          "selector": {
+            "primary": {"method": "uia_automation_id", "value": "btnMarcarConcluido"},
+            "label": "Marcar Concluido", "control_type": "Button"
+          }
+        }
+      ]
+    }
+  ],
+  "assertions": [
+    {"after_step": 2, "check": "field_has_value", "selector": {"primary": {"method": "uia_automation_id", "value": "txtBuscaProcesso"}}, "expected": "$numero_processo"},
+    {"after_step": 5, "check": "output_not_empty", "field": "prazo_status"},
+    {"after_step": 8, "check": "element_visible", "selector": {"primary": {"method": "uia_automation_id", "value": "lblConfirmacao"}}}
+  ]
+}

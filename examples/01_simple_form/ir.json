@@ -1,0 +1,75 @@
+{
+  "workflow_id": "cadastro_cliente",
+  "description": "Fill client registration form with 5 fields and submit",
+  "inputs": [
+    {"name": "nome_completo", "type": "string", "example": "Maria Silva Santos"},
+    {"name": "cpf", "type": "string", "example": "123.456.789-00"},
+    {"name": "email", "type": "string", "example": "maria@exemplo.com.br"},
+    {"name": "telefone", "type": "string", "example": "+55 11 98765-4321"},
+    {"name": "endereco", "type": "string", "example": "Rua das Flores, 123"}
+  ],
+  "outputs": [{"name": "result", "type": "string"}],
+  "steps": [
+    {"id": 1, "op": "open_app", "target": "Sistema Cadastro - Novo Cliente"},
+    {
+      "id": 2, "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtNomeCompleto"},
+        "tertiary": {"method": "ocr_anchor", "text": "Nome Completo"},
+        "label": "Nome Completo", "control_type": "Edit"
+      },
+      "value": "$nome_completo"
+    },
+    {
+      "id": 3, "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtCPF"},
+        "tertiary": {"method": "ocr_anchor", "text": "CPF"},
+        "label": "CPF", "control_type": "Edit"
+      },
+      "value": "$cpf"
+    },
+    {
+      "id": 4, "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtEmail"},
+        "tertiary": {"method": "ocr_anchor", "text": "E-mail"},
+        "label": "E-mail", "control_type": "Edit"
+      },
+      "value": "$email"
+    },
+    {
+      "id": 5, "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtTelefone"},
+        "tertiary": {"method": "ocr_anchor", "text": "Telefone"},
+        "label": "Telefone", "control_type": "Edit"
+      },
+      "value": "$telefone"
+    },
+    {
+      "id": 6, "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtEndereco"},
+        "tertiary": {"method": "ocr_anchor", "text": "Endereco"},
+        "label": "Endereco", "control_type": "Edit"
+      },
+      "value": "$endereco"
+    },
+    {
+      "id": 7, "op": "click",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "btnSalvar"},
+        "tertiary": {"method": "ocr_anchor", "text": "Salvar"},
+        "label": "Salvar", "control_type": "Button"
+      }
+    }
+  ],
+  "assertions": [
+    {"after_step": 2, "check": "field_has_value", "selector": {"primary": {"method": "uia_automation_id", "value": "txtNomeCompleto"}}, "expected": "$nome_completo"},
+    {"after_step": 3, "check": "field_has_value", "selector": {"primary": {"method": "uia_automation_id", "value": "txtCPF"}}, "expected": "$cpf"},
+    {"after_step": 4, "check": "field_has_value", "selector": {"primary": {"method": "uia_automation_id", "value": "txtEmail"}}, "expected": "$email"},
+    {"after_step": 5, "check": "field_has_value", "selector": {"primary": {"method": "uia_automation_id", "value": "txtTelefone"}}, "expected": "$telefone"},
+    {"after_step": 6, "check": "field_has_value", "selector": {"primary": {"method": "uia_automation_id", "value": "txtEndereco"}}, "expected": "$endereco"}
+  ]
+}
