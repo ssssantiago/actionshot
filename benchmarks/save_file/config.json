@@ -1,0 +1,9 @@
+{
+  "name": "save_file",
+  "difficulty": "trivial",
+  "app_type": "Save Dialog - Windows",
+  "has_branches": false,
+  "has_loops": false,
+  "step_count": 3,
+  "description": "Save file: Ctrl+S, type filename, click Salvar. 3 steps."
+}

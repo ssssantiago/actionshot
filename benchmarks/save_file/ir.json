@@ -1,0 +1,44 @@
+{
+  "workflow_id": "save_file",
+  "description": "Save the current document with a specific filename using Ctrl+S dialog.",
+  "inputs": [
+    {"name": "filename", "type": "string", "example": "Peticao_Inicial_2024.docx"}
+  ],
+  "outputs": [
+    {"name": "result", "type": "string"}
+  ],
+  "steps": [
+    {
+      "id": 1,
+      "op": "keyboard_shortcut",
+      "keys": "ctrl+s",
+      "description": "Open Save As dialog"
+    },
+    {
+      "id": 2,
+      "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "FileNameControlHost"},
+        "secondary": {"method": "uia_name", "value": "Nome do arquivo:"},
+        "tertiary": {"method": "ocr_anchor", "text": "Nome do arquivo"},
+        "fallback": {"method": "coordinates", "x": 520, "y": 480},
+        "label": "Nome do arquivo",
+        "control_type": "Edit"
+      },
+      "value": "$filename"
+    },
+    {
+      "id": 3,
+      "op": "click",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "1"},
+        "secondary": {"method": "uia_name", "value": "Salvar"},
+        "tertiary": {"method": "ocr_anchor", "text": "Salvar"},
+        "fallback": {"method": "coordinates", "x": 680, "y": 520},
+        "label": "Salvar",
+        "control_type": "Button"
+      }
+    }
+  ],
+  "assertions": []
+}

@@ -1,0 +1,9 @@
+{
+  "name": "copy_paste_between_apps",
+  "difficulty": "trivial",
+  "app_type": "Bloco de Notas / Microsoft Word",
+  "has_branches": false,
+  "has_loops": false,
+  "step_count": 5,
+  "description": "Copy text from Notepad and paste into Word, 4 effective steps across 2 apps."
+}

@@ -1,0 +1,41 @@
+{
+  "workflow_id": "copy_paste_between_apps",
+  "description": "Copy text from Notepad and paste into Word document.",
+  "inputs": [
+    {"name": "source_text", "type": "string", "example": "Contrato de Prestacao de Servicos"}
+  ],
+  "outputs": [
+    {"name": "result", "type": "string"}
+  ],
+  "steps": [
+    {
+      "id": 1,
+      "op": "open_app",
+      "target": "Documento.txt - Bloco de Notas"
+    },
+    {
+      "id": 2,
+      "op": "keyboard_shortcut",
+      "keys": "ctrl+a",
+      "description": "Select all text in Notepad"
+    },
+    {
+      "id": 3,
+      "op": "keyboard_shortcut",
+      "keys": "ctrl+c",
+      "description": "Copy selected text"
+    },
+    {
+      "id": 4,
+      "op": "open_app",
+      "target": "Peticao Inicial.docx - Microsoft Word"
+    },
+    {
+      "id": 5,
+      "op": "keyboard_shortcut",
+      "keys": "ctrl+v",
+      "description": "Paste text into Word"
+    }
+  ],
+  "assertions": []
+}

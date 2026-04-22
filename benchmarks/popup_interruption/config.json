@@ -1,0 +1,9 @@
+{
+  "name": "popup_interruption",
+  "difficulty": "adversarial",
+  "app_type": "Cadastro de Partes - Google Chrome",
+  "has_branches": false,
+  "has_loops": false,
+  "step_count": 8,
+  "description": "Normal form workflow interrupted by Windows Update popup and LGPD cookie banner. Must dismiss and continue."
+}

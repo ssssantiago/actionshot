@@ -1,0 +1,177 @@
+name: Benchmark Regression
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  benchmark:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run benchmark suite
+        run: |
+          python -m actionshot.benchmark --suite benchmarks/ --report report.json
+
+      - name: Download baseline from main (if exists)
+        id: baseline
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: benchmark-baseline
+          path: baseline/
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.pull_request.base.sha }}
+
+      - name: Compare with baseline
+        id: compare
+        shell: python
+        run: |
+          import json, os, sys
+
+          report_path = "report.json"
+          baseline_path = "baseline/report.json"
+
+          with open(report_path, "r") as f:
+              report = json.load(f)
+
+          summary = report.get("summary", {})
+          total = summary.get("total_cases", 0)
+          oss_rate = summary.get("one_shot_success_rate", 0)
+          avg_fb = summary.get("avg_selector_fallback_rate", 0)
+          avg_time = summary.get("avg_generation_time_ms", 0)
+          by_diff = summary.get("by_difficulty", {})
+
+          # Build markdown table
+          lines = []
+          lines.append("## Benchmark Results")
+          lines.append("")
+          lines.append(f"**Total cases:** {total}  ")
+          lines.append(f"**One-shot success rate:** {oss_rate:.1%}  ")
+          lines.append(f"**Avg fallback rate:** {avg_fb:.1%}  ")
+          lines.append(f"**Avg generation time:** {avg_time:.0f} ms  ")
+          lines.append("")
+          lines.append("### By difficulty")
+          lines.append("")
+          lines.append("| Difficulty | Cases | Success Rate |")
+          lines.append("|-----------|-------|-------------|")
+          for diff in sorted(by_diff):
+              info = by_diff[diff]
+              lines.append(f"| {diff} | {info['count']} | {info['success_rate']:.0%} |")
+          lines.append("")
+
+          # Per-case table
+          lines.append("### Per-case results")
+          lines.append("")
+          lines.append("| Case | Success | Fallback Rate | Time (ms) |")
+          lines.append("|------|---------|--------------|-----------|")
+          for case in report.get("cases", []):
+              if "error" in case:
+                  lines.append(f"| {case['case_name']} | ERROR | - | - |")
+                  continue
+              name = case.get("case_name", "?")
+              ok = "Pass" if case.get("one_shot_success") else "Fail"
+              fb = case.get("selector_fallback_rate", 0)
+              t = case.get("generation_time_ms", 0)
+              lines.append(f"| {name} | {ok} | {fb:.0%} | {t:.0f} |")
+          lines.append("")
+
+          # Baseline comparison
+          regressed = False
+          if os.path.isfile(baseline_path):
+              with open(baseline_path, "r") as f:
+                  baseline = json.load(f)
+              base_oss = baseline.get("summary", {}).get("one_shot_success_rate", 0)
+              delta = oss_rate - base_oss
+              lines.append("### Comparison with main")
+              lines.append("")
+              lines.append(f"| Metric | Baseline | PR | Delta |")
+              lines.append(f"|--------|----------|----|-------|")
+              marker = " :red_circle:" if delta < -0.05 else (" :green_circle:" if delta >= 0 else " :yellow_circle:")
+              lines.append(f"| one_shot_success_rate | {base_oss:.1%} | {oss_rate:.1%} | {delta:+.1%}{marker} |")
+              lines.append("")
+              if delta < -0.05:
+                  regressed = True
+                  lines.append(f"> **REGRESSION:** one_shot_success_rate dropped by {abs(delta):.1%} (threshold: 5%)")
+          else:
+              lines.append("_No baseline available for comparison._")
+
+          body = "\n".join(lines)
+
+          # Write to GITHUB_OUTPUT
+          output_file = os.environ.get("GITHUB_OUTPUT", "")
+          if output_file:
+              with open(output_file, "a") as f:
+                  f.write(f"regressed={'true' if regressed else 'false'}\n")
+                  # Multiline output
+                  import uuid
+                  delimiter = uuid.uuid4().hex
+                  f.write(f"comment_body<<{delimiter}\n{body}\n{delimiter}\n")
+
+          print(body)
+          if regressed:
+              print("\nREGRESSION DETECTED", file=sys.stderr)
+
+      - name: Comment on PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = `${{ steps.compare.outputs.comment_body }}`;
+            if (!body) return;
+
+            // Find existing bot comment to update
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const botComment = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('## Benchmark Results')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body,
+              });
+            }
+
+      - name: Upload report as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-baseline
+          path: report.json
+          retention-days: 90
+
+      - name: Fail if regressed
+        if: steps.compare.outputs.regressed == 'true'
+        run: |
+          echo "::error::one_shot_success_rate regressed by more than 5%%"
+          exit 1

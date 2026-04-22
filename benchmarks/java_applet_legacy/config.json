@@ -1,0 +1,9 @@
+{
+  "name": "java_applet_legacy",
+  "difficulty": "adversarial",
+  "app_type": "e-SAJ Peticionamento - Java(TM) Platform SE",
+  "has_branches": false,
+  "has_loops": false,
+  "step_count": 13,
+  "description": "Legacy Java applet with no UIA accessibility tree. Coordinates-only with OCR fallback. Slow loading."
+}

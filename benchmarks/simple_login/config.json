@@ -1,0 +1,9 @@
+{
+  "name": "simple_login",
+  "difficulty": "trivial",
+  "app_type": "Portal Juridico - Google Chrome",
+  "has_branches": false,
+  "has_loops": false,
+  "step_count": 5,
+  "description": "Simple login: fill username, password, click Entrar, wait for dashboard."
+}

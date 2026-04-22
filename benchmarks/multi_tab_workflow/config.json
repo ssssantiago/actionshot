@@ -1,0 +1,9 @@
+{
+  "name": "multi_tab_workflow",
+  "difficulty": "medium",
+  "app_type": "Google Chrome (multiple tabs)",
+  "has_branches": false,
+  "has_loops": false,
+  "step_count": 12,
+  "description": "Open 3 browser tabs (TJSP, TJRJ, STJ), copy processo data between them. 12 steps."
+}
