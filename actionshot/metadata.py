@@ -1,16 +1,24 @@
-"""Extract UI element metadata using Windows accessibility tree.
+"""Extract UI element metadata using Windows accessibility tree and CDP.
 
-Implements a hierarchical selector system with 4 levels of priority:
-  1. primary   - UIA AutomationId (most stable)
-  2. secondary - Structural UIA path (Window/Pane/Button chain)
-  3. tertiary  - OCR anchor (element text + search region)
-  4. fallback  - Raw screen coordinates + resolution
+Implements a hierarchical selector system with up to 7 levels of priority:
+  1. primary_web     - CSS selector via Chrome DevTools Protocol
+  2. primary_web_alt - XPath via CDP
+  3. secondary_web   - ARIA accessible name/role via CDP
+  4. primary         - UIA AutomationId (most stable native selector)
+  5. secondary       - Structural UIA path (Window/Pane/Button chain)
+  6. tertiary        - OCR anchor (element text + search region)
+  7. fallback        - Raw screen coordinates + resolution
+
+For browser-based apps (Chrome, Edge, Brave), CDP web selectors are
+attempted first, providing stable DOM-level targeting for systems like
+PJe, Projudi, e-SAJ, and eproc.
 """
 
 import ctypes
 import ctypes.wintypes
 import os
 import re
+from typing import Any
 
 
 # ---------------------------------------------------------------------------
@@ -222,9 +230,23 @@ def _build_target(
     automation_id: str,
     uia_path: str,
     element_name: str,
+    web_selectors: dict | None = None,
 ) -> dict:
-    """Construct the four-level target selector dict."""
+    """Construct the hierarchical target selector dict.
+
+    When *web_selectors* is provided (from CDP), the target gets up to 7
+    levels: 3 web + 4 native.  Otherwise falls back to the original 4.
+    """
     screen_w, screen_h = _get_screen_resolution()
+
+    # -- web selectors (from CDP, if available) --
+    primary_web = None
+    primary_web_alt = None
+    secondary_web = None
+    if web_selectors:
+        primary_web = web_selectors.get("primary_web")
+        primary_web_alt = web_selectors.get("primary_web_alt")
+        secondary_web = web_selectors.get("secondary_web")
 
     # -- primary: UIA AutomationId (only if useful) --
     if _is_useful_automation_id(automation_id):
@@ -255,6 +277,9 @@ def _build_target(
     }
 
     return {
+        "primary_web": primary_web,
+        "primary_web_alt": primary_web_alt,
+        "secondary_web": secondary_web,
         "primary": primary,
         "secondary": secondary,
         "tertiary": tertiary,
@@ -329,18 +354,52 @@ def get_window_info(x: int, y: int) -> dict:
     info["element"] = elem_dict
 
     # ------------------------------------------------------------------
+    # CDP web selectors (for browser-based apps)
+    # ------------------------------------------------------------------
+    web_selectors: dict | None = None
+    page_url: str = ""
+    process_lower = (info.get("process_name") or "").lower()
+    _BROWSER_PROCESSES = {"chrome.exe", "msedge.exe", "brave.exe"}
+
+    if process_lower in _BROWSER_PROCESSES:
+        try:
+            from actionshot.cdp import ChromeCDP
+
+            cdp = ChromeCDP()
+            if cdp.is_available():
+                cdp.connect()
+                try:
+                    web_selectors = cdp.get_element_at(x, y)
+                    # Also capture the page URL for context
+                    try:
+                        page_url = cdp.get_page_url()
+                    except Exception:
+                        page_url = ""
+                finally:
+                    cdp.disconnect()
+        except Exception:
+            # CDP not available or failed -- fall through to UIA-only
+            web_selectors = None
+
+    # ------------------------------------------------------------------
     # Hierarchical target selector
     # ------------------------------------------------------------------
     element_name = (elem_dict or {}).get("name", "")
-    info["target"] = _build_target(x, y, automation_id, uia_path, element_name)
+    info["target"] = _build_target(
+        x, y, automation_id, uia_path, element_name,
+        web_selectors=web_selectors,
+    )
 
     # ------------------------------------------------------------------
     # Context block
     # ------------------------------------------------------------------
-    info["context"] = {
+    context: dict[str, Any] = {
         "window_title": info["window_title"],
         "app_name": info["process_name"],
         "window_class": info["window_class"],
     }
+    if web_selectors and page_url:  # type: ignore[possibly-undefined]
+        context["page_url"] = page_url
+    info["context"] = context
 
     return info
