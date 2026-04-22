@@ -1,0 +1,9 @@
+{
+  "name": "simple_form_fill",
+  "difficulty": "trivial",
+  "app_type": "Contact Form - Web Browser",
+  "has_branches": false,
+  "has_loops": false,
+  "step_count": 5,
+  "description": "Basic 5-step form fill: name, email, phone, and submit."
+}
