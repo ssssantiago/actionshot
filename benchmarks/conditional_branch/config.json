@@ -1,0 +1,9 @@
+{
+  "name": "conditional_branch",
+  "difficulty": "hard",
+  "app_type": "Expense Tracker - Desktop",
+  "has_branches": true,
+  "has_loops": false,
+  "step_count": 8,
+  "description": "Expense report with conditional routing: manager approval if over threshold, auto-approve otherwise."
+}
