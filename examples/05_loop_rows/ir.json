@@ -1,0 +1,81 @@
+{
+  "workflow_id": "cadastro_lote",
+  "description": "Loop over spreadsheet rows and fill a registration form for each",
+  "inputs": [
+    {"name": "planilha_path", "type": "string", "example": "C:\\Dados\\clientes.xlsx"}
+  ],
+  "outputs": [{"name": "total_cadastrados", "type": "integer"}],
+  "steps": [
+    {"id": 1, "op": "open_app", "target": "Sistema Cadastro - Lote"},
+    {
+      "id": 2, "op": "loop",
+      "source": {"type": "spreadsheet", "path": "$planilha_path", "sheet": "Clientes"},
+      "row_variable": "row",
+      "iterations": "all_rows",
+      "body": [
+        {
+          "id": 3, "op": "click",
+          "selector": {
+            "primary": {"method": "uia_automation_id", "value": "btnNovo"},
+            "tertiary": {"method": "ocr_anchor", "text": "Novo"},
+            "label": "Novo", "control_type": "Button"
+          }
+        },
+        {
+          "id": 4, "op": "wait_for",
+          "selector": {
+            "primary": {"method": "uia_automation_id", "value": "txtNome"},
+            "label": "Nome", "control_type": "Edit"
+          },
+          "timeout_ms": 5000
+        },
+        {
+          "id": 5, "op": "fill_field",
+          "selector": {
+            "primary": {"method": "uia_automation_id", "value": "txtNome"},
+            "label": "Nome", "control_type": "Edit"
+          },
+          "value": "$row.nome"
+        },
+        {
+          "id": 6, "op": "fill_field",
+          "selector": {
+            "primary": {"method": "uia_automation_id", "value": "txtCPF"},
+            "label": "CPF", "control_type": "Edit"
+          },
+          "value": "$row.cpf"
+        },
+        {
+          "id": 7, "op": "fill_field",
+          "selector": {
+            "primary": {"method": "uia_automation_id", "value": "txtEmail"},
+            "label": "Email", "control_type": "Edit"
+          },
+          "value": "$row.email"
+        },
+        {
+          "id": 8, "op": "click",
+          "selector": {
+            "primary": {"method": "uia_automation_id", "value": "btnSalvar"},
+            "tertiary": {"method": "ocr_anchor", "text": "Salvar"},
+            "label": "Salvar", "control_type": "Button"
+          }
+        },
+        {
+          "id": 9, "op": "wait_for",
+          "selector": {
+            "primary": {"method": "uia_automation_id", "value": "lblSucesso"},
+            "label": "Sucesso", "control_type": "Text"
+          },
+          "timeout_ms": 5000
+        }
+      ]
+    }
+  ],
+  "assertions": [
+    {"after_step": 5, "check": "field_has_value", "selector": {"primary": {"method": "uia_automation_id", "value": "txtNome"}}, "expected": "$row.nome"},
+    {"after_step": 6, "check": "field_has_value", "selector": {"primary": {"method": "uia_automation_id", "value": "txtCPF"}}, "expected": "$row.cpf"},
+    {"after_step": 7, "check": "field_has_value", "selector": {"primary": {"method": "uia_automation_id", "value": "txtEmail"}}, "expected": "$row.email"},
+    {"after_step": 8, "check": "element_visible", "selector": {"primary": {"method": "uia_automation_id", "value": "lblSucesso"}}}
+  ]
+}

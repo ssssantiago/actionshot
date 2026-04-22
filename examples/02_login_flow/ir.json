@@ -1,0 +1,52 @@
+{
+  "workflow_id": "login_sistema",
+  "description": "Login with username and password, wait for dashboard to load",
+  "inputs": [
+    {"name": "usuario", "type": "string", "example": "guilherme.santiago"},
+    {"name": "senha", "type": "string", "example": "S3cret!Pass"}
+  ],
+  "outputs": [{"name": "result", "type": "string"}],
+  "steps": [
+    {"id": 1, "op": "open_app", "target": "Portal Juridico - Login"},
+    {
+      "id": 2, "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtUsuario"},
+        "tertiary": {"method": "ocr_anchor", "text": "Usuario"},
+        "label": "Usuario", "control_type": "Edit"
+      },
+      "value": "$usuario"
+    },
+    {
+      "id": 3, "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtSenha"},
+        "tertiary": {"method": "ocr_anchor", "text": "Senha"},
+        "label": "Senha", "control_type": "Edit"
+      },
+      "value": "$senha"
+    },
+    {
+      "id": 4, "op": "click",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "btnEntrar"},
+        "tertiary": {"method": "ocr_anchor", "text": "Entrar"},
+        "label": "Entrar", "control_type": "Button"
+      }
+    },
+    {
+      "id": 5, "op": "wait_for",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "pnlDashboard"},
+        "tertiary": {"method": "ocr_anchor", "text": "Painel Principal"},
+        "label": "Painel Principal", "control_type": "Pane"
+      },
+      "timeout_ms": 15000
+    }
+  ],
+  "assertions": [
+    {"after_step": 2, "check": "field_has_value", "selector": {"primary": {"method": "uia_automation_id", "value": "txtUsuario"}}, "expected": "$usuario"},
+    {"after_step": 3, "check": "field_has_value", "selector": {"primary": {"method": "uia_automation_id", "value": "txtSenha"}}, "expected": "$senha"},
+    {"after_step": 4, "check": "element_visible", "selector": {"primary": {"method": "uia_automation_id", "value": "pnlDashboard"}}}
+  ]
+}

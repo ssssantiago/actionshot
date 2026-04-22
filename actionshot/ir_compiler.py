@@ -415,6 +415,86 @@ def _inject_loops(ir_steps: list[dict], loops: list[dict]) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Automatic assertion generation
+# ---------------------------------------------------------------------------
+
+# Button labels (Portuguese + English) that indicate a submit/save action
+_SUBMIT_KEYWORDS = {"salvar", "enviar", "submit", "confirmar", "ok"}
+
+
+def _is_submit_button(selector: dict) -> bool:
+    """Return True if the selector targets a submit/save button."""
+    label = (selector.get("label") or "").strip().lower()
+    for kw in _SUBMIT_KEYWORDS:
+        if kw in label:
+            return True
+    return False
+
+
+def _generate_assertions(ir_steps: list[dict]) -> list[dict]:
+    """Walk the IR steps and produce automatic assertions.
+
+    Rules:
+      - After a ``click`` on a submit/save button, assert that the next
+        element in the workflow is visible (confirming a page/state transition).
+      - After a ``fill_field``, assert the field holds the expected value.
+      - After an ``extract_text``, assert the output is not empty.
+    """
+    assertions: list[dict] = []
+    flat_steps = _flatten_steps(ir_steps)
+
+    for idx, step in enumerate(flat_steps):
+        op = step.get("op", "")
+        step_id = step.get("id", idx + 1)
+
+        if op == "click" and _is_submit_button(step.get("selector", {})):
+            # Look ahead for the next step's selector to verify transition
+            if idx + 1 < len(flat_steps):
+                next_step = flat_steps[idx + 1]
+                next_sel = next_step.get("selector", {})
+                if next_sel:
+                    assertions.append({
+                        "after_step": step_id,
+                        "check": "element_visible",
+                        "selector": next_sel,
+                    })
+
+        elif op == "fill_field":
+            selector = step.get("selector", {})
+            value = step.get("value", "")
+            if selector:
+                assertions.append({
+                    "after_step": step_id,
+                    "check": "field_has_value",
+                    "selector": selector,
+                    "expected": value,
+                })
+
+        elif op == "extract_text":
+            # Derive the output field name from the selector label
+            selector = step.get("selector", {})
+            field_name = _slugify(selector.get("label", "")) or "extracted_value"
+            assertions.append({
+                "after_step": step_id,
+                "check": "output_not_empty",
+                "field": field_name,
+            })
+
+    return assertions
+
+
+def _flatten_steps(ir_steps: list[dict]) -> list[dict]:
+    """Flatten loop bodies so assertions can reference all steps linearly."""
+    flat: list[dict] = []
+    for step in ir_steps:
+        if step.get("op") == "loop" and "body" in step:
+            flat.extend(step["body"])
+        else:
+            flat.append(step)
+    return flat
+
+
+# ---------------------------------------------------------------------------
 # Public compiler class
 # ---------------------------------------------------------------------------
 
@@ -478,13 +558,16 @@ class IRCompiler:
             for name, info in variables.items()
         ]
 
+        # Generate automatic assertions
+        assertions = _generate_assertions(ir_steps)
+
         ir: dict[str, Any] = {
             "workflow_id": _slugify(self.session_name) or f"workflow_{uuid.uuid4().hex[:8]}",
             "description": f"Auto-generated from session recording: {self.session_name}",
             "inputs": inputs,
             "outputs": [{"name": "result", "type": "string"}],
             "steps": ir_steps,
-            "assertions": [],
+            "assertions": assertions,
         }
 
         return ir

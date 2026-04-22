@@ -1,0 +1,61 @@
+{
+  "workflow_id": "consulta_processo",
+  "description": "Search for a legal case number and extract the results table",
+  "inputs": [
+    {"name": "numero_processo", "type": "string", "example": "0001234-56.2024.8.26.0100"}
+  ],
+  "outputs": [
+    {"name": "resultado_busca", "type": "string"},
+    {"name": "status_processo", "type": "string"}
+  ],
+  "steps": [
+    {"id": 1, "op": "open_app", "target": "Consulta Processual"},
+    {
+      "id": 2, "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtNumeroProcesso"},
+        "tertiary": {"method": "ocr_anchor", "text": "Numero do Processo"},
+        "label": "Numero do Processo", "control_type": "Edit"
+      },
+      "value": "$numero_processo"
+    },
+    {
+      "id": 3, "op": "click",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "btnPesquisar"},
+        "tertiary": {"method": "ocr_anchor", "text": "Pesquisar"},
+        "label": "Pesquisar", "control_type": "Button"
+      }
+    },
+    {
+      "id": 4, "op": "wait_for",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "gridResultados"},
+        "label": "Resultados", "control_type": "DataGrid"
+      },
+      "timeout_ms": 10000
+    },
+    {
+      "id": 5, "op": "extract_text",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "gridResultados"},
+        "label": "Resultados", "control_type": "DataGrid"
+      },
+      "output": "resultado_busca"
+    },
+    {
+      "id": 6, "op": "extract_text",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "lblStatus"},
+        "tertiary": {"method": "ocr_anchor", "text": "Status"},
+        "label": "Status", "control_type": "Text"
+      },
+      "output": "status_processo"
+    }
+  ],
+  "assertions": [
+    {"after_step": 2, "check": "field_has_value", "selector": {"primary": {"method": "uia_automation_id", "value": "txtNumeroProcesso"}}, "expected": "$numero_processo"},
+    {"after_step": 5, "check": "output_not_empty", "field": "resultado_busca"},
+    {"after_step": 6, "check": "output_not_empty", "field": "status_processo"}
+  ]
+}
