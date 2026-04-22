@@ -1,0 +1,9 @@
+{
+  "name": "email_attachment",
+  "difficulty": "medium",
+  "app_type": "Microsoft Outlook",
+  "has_branches": false,
+  "has_loops": false,
+  "step_count": 8,
+  "description": "Open Outlook, new email, fill to/subject, attach PDF file, send. 8 steps."
+}
