@@ -206,6 +206,91 @@ def cmd_redact(args):
     print(f"Redacted copy created at: {output}")
 
 
+def cmd_ollama(args):
+    import json
+    from actionshot.ollama import OllamaClient
+    print(BANNER)
+
+    client = OllamaClient(model=args.model)
+    if not client.is_available():
+        print("Error: Ollama is not running at", client.host)
+        print("Start it with: ollama serve")
+        sys.exit(1)
+
+    # Load IR from session
+    import os
+    ir_path = os.path.join(args.session, "ir.json")
+    if not os.path.exists(ir_path):
+        print(f"Error: IR file not found at {ir_path}")
+        print("Run 'python main.py compile <session>' first.")
+        sys.exit(1)
+
+    with open(ir_path, "r", encoding="utf-8") as f:
+        ir = json.load(f)
+
+    print(f"Generating script with Ollama ({args.model})...")
+    script = client.generate_script(ir)
+    print("\n" + script)
+
+
+def cmd_audit(args):
+    from actionshot.audit import AuditLog
+    audit = AuditLog()
+
+    if args.audit_action == "list":
+        entries = audit.get_audit_trail(
+            workflow_id=getattr(args, "workflow", None),
+            user=getattr(args, "user", None),
+            days=args.days,
+        )
+        if not entries:
+            print("No audit entries found.")
+        else:
+            for entry in entries:
+                ts = entry.get("timestamp", "?")
+                event = entry.get("event", "?")
+                user = entry.get("user") or entry.get("approver") or "?"
+                print(f"  [{ts}] {event:25s} user={user}")
+    elif args.audit_action == "export":
+        audit.export_report(args.path, days=args.days)
+
+
+def cmd_retention(args):
+    from actionshot.audit import RetentionPolicy
+    policy = RetentionPolicy()
+
+    if args.dry_run:
+        policy.dry_run(args.recordings)
+    else:
+        policy.enforce(args.recordings)
+
+
+def cmd_approval(args):
+    from actionshot.audit import ApprovalWorkflow
+    import getpass
+    wf = ApprovalWorkflow()
+
+    if args.approval_action == "request":
+        user = getpass.getuser()
+        wf.request_approval(args.workflow_id, user, args.description)
+    elif args.approval_action == "approve":
+        approver = getpass.getuser()
+        wf.approve(args.workflow_id, approver)
+    elif args.approval_action == "reject":
+        approver = getpass.getuser()
+        wf.reject(args.workflow_id, approver, args.reason or "No reason given")
+    elif args.approval_action == "list":
+        pending = wf.list_pending()
+        if not pending:
+            print("No pending approvals.")
+        else:
+            for item in pending:
+                wf_id = item["workflow_id"]
+                req = item.get("requester", "?")
+                desc = item.get("description", "")
+                print(f"  {wf_id:30s} requester={req}  {desc}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="ActionShot - Record desktop interactions for AI-powered automation",
@@ -325,6 +410,56 @@ def main():
     rd = sub.add_parser("redact", help="Create redacted copy of a session")
     rd.add_argument("session", help="Path to session folder")
     rd.set_defaults(func=cmd_redact)
+
+    # ollama
+    ol = sub.add_parser("ollama", help="Generate script using local Ollama model")
+    ol.add_argument("session", help="Path to session folder")
+    ol.add_argument("--model", default="codellama:13b", help="Ollama model (default: codellama:13b)")
+    ol.set_defaults(func=cmd_ollama)
+
+    # audit
+    au = sub.add_parser("audit", help="Query or export audit logs")
+    au_sub = au.add_subparsers(dest="audit_action")
+
+    au_list = au_sub.add_parser("list", help="List audit entries")
+    au_list.add_argument("--workflow", default=None, help="Filter by workflow ID")
+    au_list.add_argument("--user", default=None, help="Filter by user")
+    au_list.add_argument("--days", type=int, default=30, help="Look back N days (default: 30)")
+
+    au_export = au_sub.add_parser("export", help="Export audit report as CSV")
+    au_export.add_argument("path", help="Output CSV file path")
+    au_export.add_argument("--days", type=int, default=90, help="Look back N days (default: 90)")
+
+    au.set_defaults(func=cmd_audit)
+
+    # retention
+    rt = sub.add_parser("retention", help="Manage data retention (LGPD compliance)")
+    rt_sub = rt.add_subparsers(dest="retention_action")
+
+    rt_enforce = rt_sub.add_parser("enforce", help="Run retention policy")
+    rt_enforce.add_argument("--dry-run", action="store_true", help="Show what would be deleted")
+    rt_enforce.add_argument("--recordings", default="recordings", help="Recordings directory")
+
+    rt.set_defaults(func=cmd_retention, dry_run=False, recordings="recordings")
+
+    # approval
+    ap = sub.add_parser("approval", help="Manage workflow approvals")
+    ap_sub = ap.add_subparsers(dest="approval_action")
+
+    ap_req = ap_sub.add_parser("request", help="Request approval for a workflow")
+    ap_req.add_argument("workflow_id", help="Workflow identifier")
+    ap_req.add_argument("--description", required=True, help="Description of the workflow")
+
+    ap_approve = ap_sub.add_parser("approve", help="Approve a workflow")
+    ap_approve.add_argument("workflow_id", help="Workflow identifier")
+
+    ap_reject = ap_sub.add_parser("reject", help="Reject a workflow")
+    ap_reject.add_argument("workflow_id", help="Workflow identifier")
+    ap_reject.add_argument("--reason", default=None, help="Rejection reason")
+
+    ap_sub.add_parser("list", help="List pending approvals")
+
+    ap.set_defaults(func=cmd_approval)
 
     args = parser.parse_args()
     if not args.command:
