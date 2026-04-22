@@ -60,6 +60,12 @@ try:
 except ImportError:
     extract_structured = None  # type: ignore[assignment]
 
+try:
+    from actionshot.cdp import ChromeCDP
+    _HAS_CDP = True
+except ImportError:
+    _HAS_CDP = False
+
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -170,13 +176,19 @@ class _SelectorResolver:
 
     @staticmethod
     def _expand(spec: SelectorSpec) -> list[tuple[str, Any]]:
-        """Normalise a selector spec into ordered (level_name, selector) pairs."""
+        """Normalise a selector spec into ordered (level_name, selector) pairs.
+
+        Resolution order: web selectors first (CDP), then UIA, OCR, coords.
+        """
         if isinstance(spec, str):
             return [("primary", spec)]
         if isinstance(spec, dict):
             ordered = []
-            for key in ("primary", "secondary", "tertiary", "fallback"):
-                if key in spec:
+            for key in (
+                "primary_web", "primary_web_alt", "secondary_web",
+                "primary", "secondary", "tertiary", "fallback",
+            ):
+                if key in spec and spec[key] is not None:
                     ordered.append((key, spec[key]))
             # Also accept a flat dict as a single selector
             if not ordered:
@@ -185,12 +197,18 @@ class _SelectorResolver:
         raise TypeError(f"Invalid selector spec type: {type(spec)}")
 
     def _resolve_single(self, sel: Any, *, timeout: float) -> _ResolvedElement:
-        """Try the four resolution strategies in order for a single selector value."""
+        """Try resolution strategies in order for a single selector value."""
         if isinstance(sel, str):
             # Strategy 1: AutomationId
             return self._by_automation_id(sel, timeout=timeout)
 
         if isinstance(sel, dict):
+            method = sel.get("method", "")
+
+            # Web selector strategies (CDP)
+            if method in ("css_selector", "xpath", "accessible_name"):
+                return self._resolve_web_selector(sel, timeout=timeout)
+
             # Explicit coords shortcut
             if "coords" in sel:
                 x, y = sel["coords"]
@@ -248,6 +266,125 @@ class _SelectorResolver:
         elem = self._window.child_window(**kwargs)
         elem.wait("exists visible", timeout=timeout)
         return _ResolvedElement(elem, "", "name+type")
+
+    def _resolve_web_selector(self, sel: dict, *, timeout: float) -> _ResolvedElement:
+        """Resolve a web-native selector via Chrome DevTools Protocol.
+
+        Supports CSS selectors, XPath, and accessible name/role queries.
+        Uses ``Runtime.evaluate`` to locate the element in the page and
+        return its bounding rect as screen coordinates.
+        """
+        if not _HAS_CDP:
+            raise LookupError("CDP module not available")
+
+        cdp = ChromeCDP()
+        if not cdp.is_available():
+            raise LookupError("Chrome CDP debugging port not reachable")
+
+        cdp.connect()
+        try:
+            method = sel.get("method", "")
+
+            if method == "css_selector":
+                value = sel.get("value", "")
+                js = (
+                    f"(function() {{"
+                    f"  var el = document.querySelector({json.dumps(value)});"
+                    f"  if (!el) return null;"
+                    f"  var r = el.getBoundingClientRect();"
+                    f"  return JSON.stringify({{x: r.x + r.width/2, y: r.y + r.height/2,"
+                    f"    w: r.width, h: r.height, screenX: window.screenX,"
+                    f"    screenY: window.screenY, outerH: window.outerHeight,"
+                    f"    innerH: window.innerHeight, dpr: window.devicePixelRatio}});"
+                    f"}})()"
+                )
+            elif method == "xpath":
+                value = sel.get("value", "")
+                js = (
+                    f"(function() {{"
+                    f"  var r = document.evaluate({json.dumps(value)}, document, null,"
+                    f"    XPathResult.FIRST_ORDERED_NODE_TYPE, null);"
+                    f"  var el = r.singleNodeValue;"
+                    f"  if (!el) return null;"
+                    f"  var rect = el.getBoundingClientRect();"
+                    f"  return JSON.stringify({{x: rect.x + rect.width/2,"
+                    f"    y: rect.y + rect.height/2, w: rect.width, h: rect.height,"
+                    f"    screenX: window.screenX, screenY: window.screenY,"
+                    f"    outerH: window.outerHeight, innerH: window.innerHeight,"
+                    f"    dpr: window.devicePixelRatio}});"
+                    f"}})()"
+                )
+            elif method == "accessible_name":
+                role = sel.get("role", "")
+                name = sel.get("name", "")
+                # Use aria role + name query via JS
+                if role and name:
+                    selector_js = (
+                        f"document.querySelector("
+                        f"'[role=\"{role}\"][aria-label=\"{name}\"]')"
+                        f" || document.querySelector("
+                        f"'{role}') "
+                    )
+                    # Broader search: find by role then match text content
+                    js = (
+                        f"(function() {{"
+                        f"  var el = document.querySelector('[role=\"{role}\"][aria-label=\"{name}\"]');"
+                        f"  if (!el) {{"
+                        f"    var all = document.querySelectorAll('[role=\"{role}\"], {role}');"
+                        f"    for (var i = 0; i < all.length; i++) {{"
+                        f"      if (all[i].textContent.trim() === {json.dumps(name)}"
+                        f"          || all[i].getAttribute('aria-label') === {json.dumps(name)}) {{"
+                        f"        el = all[i]; break;"
+                        f"      }}"
+                        f"    }}"
+                        f"  }}"
+                        f"  if (!el) return null;"
+                        f"  var r = el.getBoundingClientRect();"
+                        f"  return JSON.stringify({{x: r.x + r.width/2, y: r.y + r.height/2,"
+                        f"    w: r.width, h: r.height, screenX: window.screenX,"
+                        f"    screenY: window.screenY, outerH: window.outerHeight,"
+                        f"    innerH: window.innerHeight, dpr: window.devicePixelRatio}});"
+                        f"}})()"
+                    )
+                else:
+                    raise LookupError(f"accessible_name selector needs role and name: {sel!r}")
+            else:
+                raise LookupError(f"Unknown web selector method: {method!r}")
+
+            result = cdp.execute_js(js)
+            if result is None or result == "":
+                raise LookupError(f"Web selector found no element: {sel!r}")
+
+            if isinstance(result, str):
+                info = json.loads(result)
+            else:
+                info = result
+
+            if info is None:
+                raise LookupError(f"Web selector found no element: {sel!r}")
+
+            # Convert page coordinates to screen coordinates
+            dpr = info.get("dpr", 1)
+            screen_x = info.get("screenX", 0)
+            screen_y = info.get("screenY", 0)
+            outer_h = info.get("outerH", 0)
+            inner_h = info.get("innerH", 0)
+            chrome_top = outer_h - inner_h
+
+            cx = int(info["x"] * dpr + screen_x)
+            cy = int(info["y"] * dpr + screen_y + chrome_top)
+
+            log(
+                "web_selector_resolved",
+                level="DEBUG",
+                method=method,
+                selector=str(sel),
+                coords=(cx, cy),
+            )
+            return _ResolvedElement(None, "", f"web_{method}", coords=(cx, cy))
+
+        finally:
+            cdp.disconnect()
 
     def _by_ocr(self, text: str) -> _ResolvedElement:
         img = take_screenshot()  # type: ignore[misc]
@@ -588,6 +725,34 @@ class UI:
                 pass
 
         return ""
+
+    def execute_js(self, script: str) -> Any:
+        """Execute a JavaScript expression in the browser page via CDP.
+
+        Requires Chrome/Edge/Brave to be running with a debugging port.
+        Returns the evaluated result.
+
+        Raises RuntimeError if CDP is not available.
+        """
+        log("execute_js", script_len=len(script))
+        if DRY_RUN:
+            return "[DRY_RUN]"
+
+        if not _HAS_CDP:
+            raise RuntimeError("CDP module not available -- cannot execute JS")
+
+        cdp = ChromeCDP()
+        if not cdp.is_available():
+            raise RuntimeError(
+                "Chrome CDP debugging port not reachable. "
+                "Launch the browser with --remote-debugging-port=9222"
+            )
+
+        cdp.connect()
+        try:
+            return cdp.execute_js(script)
+        finally:
+            cdp.disconnect()
 
     def navigate(self, path: Sequence[str], *, timeout: float = 5.0) -> None:
         """Click through a menu path, e.g. ``["File", "Save As"]``."""
