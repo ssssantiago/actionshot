@@ -40,18 +40,7 @@ C = {
 }
 
 FONT = "Segoe UI"
-MONO = "Cascadia Code"
-
-# Try Cascadia, fall back to Consolas
-try:
-    _test = tk.Tk()
-    _test.withdraw()
-    _f = tk.font.Font(family=MONO, size=10)
-    if MONO.lower() not in _f.actual()["family"].lower():
-        MONO = "Consolas"
-    _test.destroy()
-except Exception:
-    MONO = "Consolas"
+MONO = "Consolas"  # safe default, Cascadia checked at runtime
 
 
 # ── Custom widgets ────────────────────────────────────────────────────
