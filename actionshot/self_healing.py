@@ -27,6 +27,7 @@ import json
 import locale
 import os
 import platform
+import sys
 import uuid
 from pathlib import Path
 from typing import Any
@@ -833,3 +834,294 @@ little as possible to make the workflow succeed.
                 target[part] = {}
             target = target[part]
         target[parts[-1]] = value
+
+
+# ---------------------------------------------------------------------------
+# AutoHealingRunner
+# ---------------------------------------------------------------------------
+
+class AutoHealingRunner:
+    """Runs a workflow with automatic self-healing on failure.
+
+    Executes a generated RPA script and, when it fails, captures failure
+    context, diagnoses the issue, applies a fix (automatic or AI-assisted),
+    regenerates the script, and retries -- up to *max_healing_cycles* times.
+    """
+
+    def __init__(
+        self,
+        workflow_id: str,
+        ir: dict,
+        script_path: str,
+        max_healing_cycles: int = 3,
+    ) -> None:
+        self.workflow_id = workflow_id
+        self.ir = copy.deepcopy(ir)
+        self.script_path = script_path
+        self.max_healing_cycles = max_healing_cycles
+
+        self._capture = FailureCapture()
+        self._healer = SelfHealingLoop()
+        self.healing_history: list[dict] = []
+
+    # -- public API -----------------------------------------------------------
+
+    def run(self, inputs: dict) -> dict:
+        """Execute workflow. On failure, capture context -> diagnose -> fix -> retry.
+
+        Loop: execute -> fail -> capture -> diagnose -> auto_fix or ai_fix ->
+              patch IR -> regenerate script -> retry -> success or give up
+
+        Returns
+        -------
+        dict
+            A result dict with keys ``status``, ``output`` (on success),
+            ``healing_history``, and ``cycles_used``.
+        """
+        current_ir = copy.deepcopy(self.ir)
+        current_script = self.script_path
+        last_steps: list[dict] = []
+
+        for cycle in range(self.max_healing_cycles + 1):
+            is_retry = cycle > 0
+            try:
+                output = self._execute_script(current_script, inputs)
+                result: dict[str, Any] = {
+                    "status": "success",
+                    "output": output,
+                    "healing_history": self.healing_history,
+                    "cycles_used": cycle,
+                }
+                if is_retry and self.healing_history:
+                    winning = self.healing_history[-1]
+                    result["healed_by"] = winning.get("fix_strategy") or "ai_fix"
+                    _write_healing_log(
+                        self.workflow_id,
+                        f"Healed after {cycle} cycle(s) via "
+                        f"{result['healed_by']}",
+                    )
+                return result
+
+            except Exception as exc:
+                # No more healing budget -- give up
+                if cycle >= self.max_healing_cycles:
+                    self._notify_give_up(exc)
+                    return {
+                        "status": "failed",
+                        "error": str(exc),
+                        "healing_history": self.healing_history,
+                        "cycles_used": cycle,
+                    }
+
+                # --- Capture -------------------------------------------------
+                step_spec = self._guess_failed_step(exc, current_ir)
+                failure_pkg = self._capture.capture(
+                    exception=exc,
+                    workflow_id=self.workflow_id,
+                    step_spec=step_spec,
+                    last_steps=last_steps,
+                )
+
+                # --- Diagnose ------------------------------------------------
+                diagnosis = self._healer.diagnose(failure_pkg)
+
+                # --- Fix -----------------------------------------------------
+                fix_diff: dict | None = None
+                fix_source = "none"
+
+                if diagnosis["auto_fixable"]:
+                    fixed_step = self._healer.auto_fix(failure_pkg)
+                    if fixed_step is not None:
+                        fix_diff = {
+                            "fix_type": "ir_patch",
+                            "description": diagnosis["description"],
+                            "changes": [{
+                                "step_id": fixed_step.get("id"),
+                                "field": "step_spec",
+                                "old_value": step_spec,
+                                "new_value": fixed_step,
+                            }],
+                        }
+                        fix_source = diagnosis.get("fix_strategy", "auto")
+
+                if fix_diff is None:
+                    # AI-assisted fix path
+                    script_text = self._read_script(current_script)
+                    prompt = self._healer.request_ai_fix(
+                        failure_pkg, current_ir, script_text,
+                    )
+                    fix_diff = self._call_ai_for_fix(prompt)
+                    fix_source = "ai_fix"
+
+                if fix_diff is None:
+                    # Could not produce any fix -- record and continue to
+                    # exhaust cycles so the give-up notification fires.
+                    self._record_cycle(cycle, diagnosis, fix_source, success=False)
+                    continue
+
+                # --- Patch IR & regenerate script ----------------------------
+                current_ir = self._healer.apply_fix(fix_diff, current_ir)
+                current_script = self._patch_and_regenerate(current_ir, fix_diff)
+
+                self._record_cycle(cycle, diagnosis, fix_source, success=None)
+
+        # Should not reach here, but just in case
+        return {
+            "status": "failed",
+            "error": "Exhausted healing cycles",
+            "healing_history": self.healing_history,
+            "cycles_used": self.max_healing_cycles,
+        }
+
+    # -- execution ------------------------------------------------------------
+
+    @staticmethod
+    def _execute_script(script_path: str, inputs: dict) -> str:
+        """Run the RPA script as a subprocess, capture stdout/stderr.
+
+        The *inputs* dict is passed as a JSON string via the
+        ``ACTIONSHOT_INPUTS`` environment variable.
+        """
+        import subprocess
+
+        env = {**os.environ, "ACTIONSHOT_INPUTS": json.dumps(inputs, default=str)}
+        proc = subprocess.run(
+            [sys.executable, script_path],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=env,
+        )
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "unknown error").strip()
+            raise RuntimeError(
+                f"Script exited with code {proc.returncode}: {detail}"
+            )
+        return proc.stdout
+
+    # -- regeneration ---------------------------------------------------------
+
+    def _patch_and_regenerate(self, ir: dict, fix_diff: dict) -> str:
+        """Apply fix to IR, regenerate script via prompt_template + Claude.
+
+        If the codegen module is not available, falls back to writing the
+        patched IR as a JSON file and returning the original script path.
+        """
+        try:
+            from actionshot.codegen import generate_script
+            new_script_path = str(
+                Path(self.script_path).with_suffix(".healed.py")
+            )
+            generate_script(ir, output_path=new_script_path)
+            return new_script_path
+        except ImportError:
+            # Codegen not available -- write patched IR for manual regen
+            patched_path = str(
+                Path(self.script_path).with_suffix(".patched_ir.json")
+            )
+            with open(patched_path, "w", encoding="utf-8") as fh:
+                json.dump(ir, fh, indent=2, default=str, ensure_ascii=False)
+            return self.script_path
+
+    # -- AI fix helper --------------------------------------------------------
+
+    @staticmethod
+    def _call_ai_for_fix(prompt: str) -> dict | None:
+        """Send the AI fix prompt to Claude and parse the JSON response.
+
+        Returns a fix_diff dict or None if the call fails.
+        """
+        try:
+            from actionshot.llm import call_claude
+            response = call_claude(prompt)
+            # Try to extract JSON from the response
+            import re as _re
+            match = _re.search(r"\{[\s\S]*\}", response)
+            if match:
+                return json.loads(match.group(0))
+        except Exception:
+            pass
+        return None
+
+    # -- bookkeeping ----------------------------------------------------------
+
+    def _record_cycle(
+        self,
+        cycle: int,
+        diagnosis: dict,
+        fix_source: str,
+        success: bool | None,
+    ) -> None:
+        record = {
+            "cycle": cycle,
+            "workflow_id": self.workflow_id,
+            "pattern": diagnosis.get("pattern"),
+            "fix_strategy": fix_source,
+            "confidence": diagnosis.get("confidence"),
+            "auto_fixable": diagnosis.get("auto_fixable"),
+            "success": success,
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(
+                timespec="milliseconds"
+            ),
+        }
+        self.healing_history.append(record)
+
+    def _notify_give_up(self, exc: Exception) -> None:
+        """Send a notification when healing is exhausted."""
+        try:
+            from actionshot.telemetry import NotificationDispatcher
+            notifier = NotificationDispatcher()
+            notifier.notify({
+                "event": "healing_exhausted",
+                "workflow_id": self.workflow_id,
+                "error": str(exc),
+                "cycles": self.max_healing_cycles,
+                "healing_history": self.healing_history,
+                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(
+                    timespec="milliseconds"
+                ),
+            })
+        except Exception:
+            pass  # never let notification break the runner
+
+    @staticmethod
+    def _guess_failed_step(exc: Exception, ir: dict) -> dict:
+        """Try to identify which IR step caused the failure."""
+        steps = ir.get("steps", [])
+        msg = str(exc).lower()
+        # Look for a step id reference in the error message
+        for step in steps:
+            step_id = str(step.get("id", ""))
+            if step_id and step_id in msg:
+                return step
+        # Default to the last step
+        return steps[-1] if steps else {"id": "unknown", "op": "unknown"}
+
+    @staticmethod
+    def _read_script(path: str) -> str:
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                return fh.read()
+        except Exception:
+            return ""
+
+
+# ---------------------------------------------------------------------------
+# Module-level helpers
+# ---------------------------------------------------------------------------
+
+def _write_healing_log(workflow_id: str, message: str) -> None:
+    """Write a healing event to the healing data directory."""
+    log_path = _HEALING_DIR / "healing_log.jsonl"
+    entry = {
+        "workflow_id": workflow_id,
+        "message": message,
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(
+            timespec="milliseconds"
+        ),
+    }
+    try:
+        with open(log_path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, default=str) + "\n")
+    except Exception:
+        pass

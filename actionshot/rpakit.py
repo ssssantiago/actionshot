@@ -763,18 +763,25 @@ def run_workflow(name: str, *, retries: int = 0, base_delay: float = 2.0) -> Cal
                         "traceback": traceback.format_exc(),
                         "screenshot": screenshot_path,
                     })
+
+                    # --- Self-healing: capture failure context ---------------
+                    _capture_failure_context(
+                        exc, name, run_id, attempt, screenshot_path,
+                    )
+
                     if attempt < max_attempts:
                         delay = base_delay * (2 ** (attempt - 1))
                         log(f"Retrying workflow {name} in {delay}s", level="WARN",
                             attempt=attempt, max_attempts=max_attempts)
                         time.sleep(delay)
 
-            # All attempts exhausted
+            # All attempts exhausted -- send notification
             _write_log({
                 "event": "workflow_failed", **log_ctx,
                 "attempts": max_attempts,
                 "error": str(last_exc),
             })
+            _send_failure_notification(name, max_attempts, last_exc, log_ctx)
             raise last_exc  # type: ignore[misc]
 
         return wrapper  # type: ignore[return-value]
@@ -791,3 +798,72 @@ def _safe_repr(obj: Any, max_len: int = 500) -> str:
     if len(r) > max_len:
         return r[: max_len - 3] + "..."
     return r
+
+
+# ---------------------------------------------------------------------------
+# Self-healing integration helpers
+# ---------------------------------------------------------------------------
+
+def _capture_failure_context(
+    exc: Exception,
+    workflow_name: str,
+    run_id: str,
+    attempt: int,
+    screenshot_path: str | None,
+) -> None:
+    """Capture rich failure context via FailureCapture on every exception."""
+    try:
+        from actionshot.self_healing import FailureCapture
+        capture = FailureCapture()
+        capture.capture(
+            exception=exc,
+            workflow_id=workflow_name,
+            step_spec={
+                "id": f"attempt_{attempt}",
+                "op": "run_workflow",
+                "run_id": run_id,
+            },
+            last_steps=[],
+        )
+    except Exception:
+        pass  # never let capture break the workflow
+
+
+def _send_failure_notification(
+    workflow_name: str,
+    attempts: int,
+    exc: Exception | None,
+    log_ctx: dict,
+) -> None:
+    """Send a notification via NotificationDispatcher after all retries fail."""
+    try:
+        notifier = _get_notifier()
+        notifier.notify({
+            "event": "workflow_failed",
+            "workflow_id": workflow_name,
+            "workflow_name": workflow_name,
+            "step": f"attempt {attempts}",
+            "error": str(exc) if exc else "unknown",
+            "screenshot": log_ctx.get("screenshot"),
+            "run_id": log_ctx.get("run_id"),
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(
+                timespec="milliseconds"
+            ),
+        })
+    except Exception:
+        pass  # never let notification break the workflow
+
+
+# ---------------------------------------------------------------------------
+# Auto-configure notification on import
+# ---------------------------------------------------------------------------
+
+_notifier = None
+
+
+def _get_notifier():
+    global _notifier
+    if _notifier is None:
+        from .telemetry import NotificationDispatcher
+        _notifier = NotificationDispatcher()
+    return _notifier
