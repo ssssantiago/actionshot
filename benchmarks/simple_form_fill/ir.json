@@ -1,0 +1,67 @@
+{
+  "workflow_id": "simple_form_fill",
+  "description": "Fill out a basic contact form with name, email, and phone fields, then submit.",
+  "inputs": [
+    {"name": "full_name", "type": "string", "example": "John Doe"},
+    {"name": "email", "type": "string", "example": "john.doe@example.com"},
+    {"name": "phone", "type": "string", "example": "+1-555-0123"}
+  ],
+  "outputs": [
+    {"name": "result", "type": "string"}
+  ],
+  "steps": [
+    {
+      "id": 1,
+      "op": "open_app",
+      "target": "Contact Form - Web Browser"
+    },
+    {
+      "id": 2,
+      "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtFullName"},
+        "tertiary": {"method": "ocr_anchor", "text": "Full Name"},
+        "fallback": {"method": "coordinates", "x": 400, "y": 220},
+        "label": "Full Name",
+        "control_type": "Edit"
+      },
+      "value": "$full_name"
+    },
+    {
+      "id": 3,
+      "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtEmail"},
+        "tertiary": {"method": "ocr_anchor", "text": "Email Address"},
+        "fallback": {"method": "coordinates", "x": 400, "y": 290},
+        "label": "Email Address",
+        "control_type": "Edit"
+      },
+      "value": "$email"
+    },
+    {
+      "id": 4,
+      "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtPhone"},
+        "tertiary": {"method": "ocr_anchor", "text": "Phone Number"},
+        "fallback": {"method": "coordinates", "x": 400, "y": 360},
+        "label": "Phone Number",
+        "control_type": "Edit"
+      },
+      "value": "$phone"
+    },
+    {
+      "id": 5,
+      "op": "click",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "btnSubmit"},
+        "tertiary": {"method": "ocr_anchor", "text": "Submit"},
+        "fallback": {"method": "coordinates", "x": 400, "y": 440},
+        "label": "Submit",
+        "control_type": "Button"
+      }
+    }
+  ],
+  "assertions": []
+}

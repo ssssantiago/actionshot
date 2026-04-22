@@ -1,0 +1,126 @@
+{
+  "workflow_id": "navigation_and_extract",
+  "description": "Navigate an internal portal, search for an employee, extract their department and salary information.",
+  "inputs": [
+    {"name": "employee_id", "type": "string", "example": "EMP-2048"},
+    {"name": "search_query", "type": "string", "example": "Jane Smith"}
+  ],
+  "outputs": [
+    {"name": "department", "type": "string"},
+    {"name": "salary", "type": "string"}
+  ],
+  "steps": [
+    {
+      "id": 1,
+      "op": "open_app",
+      "target": "HR Portal - Intranet"
+    },
+    {
+      "id": 2,
+      "op": "click",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "navEmployees"},
+        "tertiary": {"method": "ocr_anchor", "text": "Employees"},
+        "fallback": {"method": "coordinates", "x": 120, "y": 85},
+        "label": "Employees",
+        "control_type": "Hyperlink"
+      }
+    },
+    {
+      "id": 3,
+      "op": "wait_for",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtSearch"},
+        "label": "Search field",
+        "control_type": "Edit"
+      },
+      "timeout_ms": 5000
+    },
+    {
+      "id": 4,
+      "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtSearch"},
+        "tertiary": {"method": "ocr_anchor", "text": "Search employees..."},
+        "fallback": {"method": "coordinates", "x": 500, "y": 150},
+        "label": "Search employees",
+        "control_type": "Edit"
+      },
+      "value": "$search_query"
+    },
+    {
+      "id": 5,
+      "op": "keyboard_shortcut",
+      "keys": "enter"
+    },
+    {
+      "id": 6,
+      "op": "wait_for",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "gridResults"},
+        "label": "Results grid",
+        "control_type": "DataGrid"
+      },
+      "timeout_ms": 10000
+    },
+    {
+      "id": 7,
+      "op": "click",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "row_0"},
+        "tertiary": {"method": "ocr_anchor", "text": "Jane Smith"},
+        "fallback": {"method": "coordinates", "x": 500, "y": 230},
+        "label": "First result row",
+        "control_type": "DataItem"
+      }
+    },
+    {
+      "id": 8,
+      "op": "wait_for",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "pnlDetails"},
+        "label": "Employee detail panel",
+        "control_type": "Pane"
+      },
+      "timeout_ms": 5000
+    },
+    {
+      "id": 9,
+      "op": "click",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "tabCompensation"},
+        "tertiary": {"method": "ocr_anchor", "text": "Compensation"},
+        "fallback": {"method": "coordinates", "x": 350, "y": 320},
+        "label": "Compensation tab",
+        "control_type": "TabItem"
+      }
+    },
+    {
+      "id": 10,
+      "op": "extract_text",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "lblDepartment"},
+        "tertiary": {"method": "ocr_anchor", "text": "Department:"},
+        "fallback": {"method": "coordinates", "x": 450, "y": 380},
+        "label": "Department value",
+        "control_type": "Text"
+      }
+    },
+    {
+      "id": 11,
+      "op": "extract_text",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "lblSalary"},
+        "tertiary": {"method": "ocr_anchor", "text": "Annual Salary:"},
+        "fallback": {"method": "coordinates", "x": 450, "y": 420},
+        "label": "Salary value",
+        "control_type": "Text"
+      }
+    },
+    {
+      "id": 12,
+      "op": "copy"
+    }
+  ],
+  "assertions": []
+}
