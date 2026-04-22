@@ -109,6 +109,7 @@ class ActionShotApp(ctk.CTk):
             ("home", "Inicio"),
             ("record", "Gravar"),
             ("review", "Revisar Passos"),
+            ("builder", "Builder"),
             ("config", "Configurar"),
             ("send", "Enviar pro Dev"),
         ]
@@ -147,6 +148,8 @@ class ActionShotApp(ctk.CTk):
 
         if page_id == "review" and self._session_path:
             self._load_review()
+        if page_id == "builder" and self._session_path:
+            self._load_builder()
         if page_id == "send":
             self._update_send_summary()
 
@@ -157,6 +160,7 @@ class ActionShotApp(ctk.CTk):
         self._build_home_page()
         self._build_record_page()
         self._build_review_page()
+        self._build_builder_page()
         self._build_config_page()
         self._build_send_page()
 
@@ -588,6 +592,609 @@ class ActionShotApp(ctk.CTk):
         for key, val in display.items():
             if val:
                 self._preview_meta.insert("end", f"{key}: {val}\n")
+
+    # ── BUILDER PAGE (n8n-style visual workflow) ─────────────────────
+
+    # Node colors by action type
+    _NODE_COLORS = {
+        "click": ("#ef4444", "#fca5a5"),
+        "drag": ("#f97316", "#fdba74"),
+        "scroll": ("#3b82f6", "#93c5fd"),
+        "keypress": ("#eab308", "#fde047"),
+        "fill_field": ("#8b5cf6", "#c4b5fd"),
+        "select_option": ("#06b6d4", "#67e8f9"),
+        "wait": ("#6b7280", "#d1d5db"),
+        "condition": ("#10b981", "#6ee7b7"),
+        "loop": ("#ec4899", "#f9a8d4"),
+        "default": ("#7c3aed", "#c4b5fd"),
+    }
+
+    NODE_W = 200
+    NODE_H = 70
+    NODE_GAP_X = 80
+    NODE_GAP_Y = 30
+    CANVAS_PAD = 40
+
+    def _build_builder_page(self):
+        page = ctk.CTkFrame(self, fg_color=BG)
+        self._pages["builder"] = page
+
+        # Toolbar
+        toolbar = ctk.CTkFrame(page, fg_color=CARD, height=50, corner_radius=0)
+        toolbar.pack(fill="x")
+        toolbar.pack_propagate(False)
+
+        ctk.CTkLabel(toolbar, text="  Workflow Builder",
+                     font=ctk.CTkFont(size=16, weight="bold"),
+                     text_color=TEXT).pack(side="left", padx=16)
+
+        # Add special nodes
+        ctk.CTkButton(toolbar, text="+ Condicao", width=100, height=32,
+                      fg_color="#10b981", hover_color="#059669",
+                      font=ctk.CTkFont(size=11),
+                      command=self._builder_add_condition).pack(side="right", padx=4, pady=8)
+        ctk.CTkButton(toolbar, text="+ Loop", width=80, height=32,
+                      fg_color="#ec4899", hover_color="#db2777",
+                      font=ctk.CTkFont(size=11),
+                      command=self._builder_add_loop).pack(side="right", padx=4, pady=8)
+        ctk.CTkButton(toolbar, text="+ Espera", width=80, height=32,
+                      fg_color="#6b7280", hover_color="#4b5563",
+                      font=ctk.CTkFont(size=11),
+                      command=self._builder_add_wait).pack(side="right", padx=4, pady=8)
+
+        self._builder_delete_btn = ctk.CTkButton(
+            toolbar, text="Excluir", width=80, height=32,
+            fg_color=RED, hover_color="#dc2626",
+            font=ctk.CTkFont(size=11),
+            command=self._builder_delete_selected)
+        self._builder_delete_btn.pack(side="right", padx=4, pady=8)
+
+        ctk.CTkButton(toolbar, text="Zoom +", width=60, height=32,
+                      fg_color=MUTED, hover_color="#64748b",
+                      font=ctk.CTkFont(size=11),
+                      command=lambda: self._builder_zoom(1.15)).pack(side="right", padx=2, pady=8)
+        ctk.CTkButton(toolbar, text="Zoom -", width=60, height=32,
+                      fg_color=MUTED, hover_color="#64748b",
+                      font=ctk.CTkFont(size=11),
+                      command=lambda: self._builder_zoom(0.87)).pack(side="right", padx=2, pady=8)
+
+        # Canvas
+        canvas_frame = ctk.CTkFrame(page, fg_color="#0a0a18", corner_radius=0)
+        canvas_frame.pack(fill="both", expand=True)
+
+        self._builder_canvas = tk.Canvas(
+            canvas_frame, bg="#0a0a18", highlightthickness=0,
+            scrollregion=(0, 0, 3000, 3000),
+        )
+
+        h_scroll = tk.Scrollbar(canvas_frame, orient="horizontal", command=self._builder_canvas.xview)
+        v_scroll = tk.Scrollbar(canvas_frame, orient="vertical", command=self._builder_canvas.yview)
+        self._builder_canvas.configure(xscrollcommand=h_scroll.set, yscrollcommand=v_scroll.set)
+
+        h_scroll.pack(side="bottom", fill="x")
+        v_scroll.pack(side="right", fill="y")
+        self._builder_canvas.pack(side="left", fill="both", expand=True)
+
+        # Draw grid
+        self._builder_draw_grid()
+
+        # Drag state
+        self._builder_nodes = []       # list of node dicts
+        self._builder_connections = []  # list of (from_idx, to_idx)
+        self._builder_selected = -1
+        self._builder_drag_data = None
+        self._builder_scale = 1.0
+
+        # Binds
+        self._builder_canvas.bind("<ButtonPress-1>", self._builder_on_press)
+        self._builder_canvas.bind("<B1-Motion>", self._builder_on_drag)
+        self._builder_canvas.bind("<ButtonRelease-1>", self._builder_on_release)
+        self._builder_canvas.bind("<MouseWheel>", self._builder_on_wheel)
+        self._builder_canvas.bind("<Double-Button-1>", self._builder_on_double_click)
+
+        # Right panel: node properties
+        self._builder_props = ctk.CTkFrame(page, fg_color=CARD, width=280, corner_radius=0)
+        self._builder_props.pack(side="right", fill="y", before=canvas_frame)
+        self._builder_props.pack_propagate(False)
+
+        ctk.CTkLabel(self._builder_props, text="Propriedades",
+                     font=ctk.CTkFont(size=14, weight="bold"),
+                     text_color=TEXT).pack(padx=12, pady=(12, 8), anchor="w")
+
+        self._prop_frame = ctk.CTkScrollableFrame(self._builder_props, fg_color="transparent")
+        self._prop_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+
+        self._builder_prop_widgets = {}
+
+    def _builder_draw_grid(self):
+        c = self._builder_canvas
+        c.delete("grid")
+        for x in range(0, 3000, 40):
+            c.create_line(x, 0, x, 3000, fill="#151530", tags="grid")
+        for y in range(0, 3000, 40):
+            c.create_line(0, y, 3000, y, fill="#151530", tags="grid")
+
+    def _load_builder(self):
+        """Populate builder canvas from session steps."""
+        if not self._steps:
+            return
+        if self._builder_nodes:
+            return  # already loaded
+
+        self._builder_nodes = []
+        self._builder_connections = []
+        self._builder_selected = -1
+
+        x = self.CANVAS_PAD
+        y = self.CANVAS_PAD
+        col = 0
+        max_per_row = 4
+
+        for i, step in enumerate(self._steps):
+            num = step.get("step", i + 1)
+            action = step.get("action", "unknown")
+            desc = step.get("description", "")
+
+            # Determine node type
+            node_type = "default"
+            for key in self._NODE_COLORS:
+                if key in action:
+                    node_type = key
+                    break
+
+            node = {
+                "id": i,
+                "step": num,
+                "type": node_type,
+                "action": action,
+                "label": self._node_label(action, desc),
+                "desc": desc,
+                "x": x,
+                "y": y,
+                "w": self.NODE_W,
+                "h": self.NODE_H,
+                "extra": {},  # user-added data (condition text, loop count, etc.)
+            }
+            self._builder_nodes.append(node)
+
+            # Connect to previous
+            if i > 0:
+                self._builder_connections.append((i - 1, i))
+
+            col += 1
+            if col >= max_per_row:
+                col = 0
+                x = self.CANVAS_PAD
+                y += self.NODE_H + self.NODE_GAP_Y + 40
+            else:
+                x += self.NODE_W + self.NODE_GAP_X
+
+        self._builder_redraw()
+
+    def _node_label(self, action, desc):
+        labels = {
+            "left_click": "Clique",
+            "right_click": "Clique Dir.",
+            "keypress": "Digitar",
+            "scroll": "Rolar",
+            "condition": "Condicao",
+            "loop": "Loop",
+            "wait": "Espera",
+        }
+        for key, val in labels.items():
+            if key in action:
+                # Add short description
+                short = desc[:25] + "..." if len(desc) > 25 else desc
+                return f"{val}\n{short}"
+        short = desc[:25] + "..." if len(desc) > 25 else desc
+        return f"{action[:15]}\n{short}"
+
+    def _builder_redraw(self):
+        c = self._builder_canvas
+        c.delete("node")
+        c.delete("conn")
+        c.delete("badge")
+        c.delete("label")
+        c.delete("port")
+
+        s = self._builder_scale
+
+        # Draw connections first (behind nodes)
+        for from_idx, to_idx in self._builder_connections:
+            if from_idx >= len(self._builder_nodes) or to_idx >= len(self._builder_nodes):
+                continue
+            n1 = self._builder_nodes[from_idx]
+            n2 = self._builder_nodes[to_idx]
+
+            x1 = (n1["x"] + n1["w"]) * s
+            y1 = (n1["y"] + n1["h"] / 2) * s
+            x2 = n2["x"] * s
+            y2 = (n2["y"] + n2["h"] / 2) * s
+
+            # Bezier-like curve
+            mid_x = (x1 + x2) / 2
+            c.create_line(
+                x1, y1, mid_x, y1, mid_x, y2, x2, y2,
+                fill="#4a4a7a", width=2, smooth=True, tags="conn",
+            )
+
+            # Arrow at end
+            c.create_polygon(
+                x2 - 8 * s, y2 - 5 * s,
+                x2, y2,
+                x2 - 8 * s, y2 + 5 * s,
+                fill="#4a4a7a", outline="", tags="conn",
+            )
+
+        # Draw nodes
+        for i, node in enumerate(self._builder_nodes):
+            nx = node["x"] * s
+            ny = node["y"] * s
+            nw = node["w"] * s
+            nh = node["h"] * s
+
+            colors = self._NODE_COLORS.get(node["type"], self._NODE_COLORS["default"])
+            bg_color = colors[0]
+            is_selected = (i == self._builder_selected)
+
+            # Shadow
+            c.create_rectangle(
+                nx + 3, ny + 3, nx + nw + 3, ny + nh + 3,
+                fill="#05051a", outline="", tags="node",
+            )
+
+            # Node body
+            outline = "#ffffff" if is_selected else "#2a2a5a"
+            outline_w = 2 if is_selected else 1
+            c.create_rectangle(
+                nx, ny, nx + nw, ny + nh,
+                fill="#1e1e3e", outline=outline, width=outline_w, tags="node",
+            )
+
+            # Left color stripe
+            stripe_w = 6 * s
+            c.create_rectangle(
+                nx, ny, nx + stripe_w, ny + nh,
+                fill=bg_color, outline="", tags="node",
+            )
+
+            # Step badge
+            badge_size = 22 * s
+            c.create_oval(
+                nx + stripe_w + 6 * s, ny + 6 * s,
+                nx + stripe_w + 6 * s + badge_size, ny + 6 * s + badge_size,
+                fill=bg_color, outline="", tags="badge",
+            )
+            c.create_text(
+                nx + stripe_w + 6 * s + badge_size / 2,
+                ny + 6 * s + badge_size / 2,
+                text=str(node["step"]), fill="white",
+                font=("Consolas", max(int(9 * s), 7), "bold"), tags="badge",
+            )
+
+            # Label text
+            label_x = nx + stripe_w + 6 * s + badge_size + 8 * s
+            lines = node["label"].split("\n")
+            for li, line in enumerate(lines):
+                font_size = max(int(11 * s), 8) if li == 0 else max(int(9 * s), 7)
+                color = TEXT if li == 0 else DIM
+                weight = "bold" if li == 0 else "normal"
+                c.create_text(
+                    label_x, ny + 16 * s + li * 18 * s,
+                    text=line, fill=color, anchor="w",
+                    font=("Segoe UI", font_size, weight), tags="label",
+                )
+
+            # Variable indicator
+            sv = self._step_vars.get(node["step"], {})
+            if sv.get("is_variable"):
+                c.create_text(
+                    nx + nw - 10 * s, ny + 10 * s,
+                    text="$", fill=YELLOW,
+                    font=("Consolas", max(int(14 * s), 9), "bold"), tags="badge",
+                )
+
+            # Output port (right)
+            port_r = 5 * s
+            c.create_oval(
+                nx + nw - port_r, ny + nh / 2 - port_r,
+                nx + nw + port_r, ny + nh / 2 + port_r,
+                fill=bg_color, outline="#2a2a5a", tags="port",
+            )
+            # Input port (left)
+            c.create_oval(
+                nx - port_r, ny + nh / 2 - port_r,
+                nx + port_r, ny + nh / 2 + port_r,
+                fill=bg_color, outline="#2a2a5a", tags="port",
+            )
+
+        # Update scroll region
+        if self._builder_nodes:
+            max_x = max(n["x"] + n["w"] for n in self._builder_nodes) + 200
+            max_y = max(n["y"] + n["h"] for n in self._builder_nodes) + 200
+            c.configure(scrollregion=(0, 0, max_x * s, max_y * s))
+
+    # ── Builder events ────────────────────────────────────────────────
+
+    def _builder_hit_test(self, cx, cy):
+        """Return index of node at canvas coords, or -1."""
+        s = self._builder_scale
+        for i, node in enumerate(self._builder_nodes):
+            nx, ny = node["x"] * s, node["y"] * s
+            nw, nh = node["w"] * s, node["h"] * s
+            if nx <= cx <= nx + nw and ny <= cy <= ny + nh:
+                return i
+        return -1
+
+    def _builder_on_press(self, event):
+        cx = self._builder_canvas.canvasx(event.x)
+        cy = self._builder_canvas.canvasy(event.y)
+        hit = self._builder_hit_test(cx, cy)
+
+        self._builder_selected = hit
+        if hit >= 0:
+            node = self._builder_nodes[hit]
+            self._builder_drag_data = {
+                "idx": hit,
+                "off_x": cx - node["x"] * self._builder_scale,
+                "off_y": cy - node["y"] * self._builder_scale,
+            }
+            self._builder_show_props(hit)
+        else:
+            self._builder_drag_data = None
+            self._builder_clear_props()
+
+        self._builder_redraw()
+
+    def _builder_on_drag(self, event):
+        if not self._builder_drag_data:
+            return
+        cx = self._builder_canvas.canvasx(event.x)
+        cy = self._builder_canvas.canvasy(event.y)
+        s = self._builder_scale
+        idx = self._builder_drag_data["idx"]
+        node = self._builder_nodes[idx]
+        node["x"] = max(0, (cx - self._builder_drag_data["off_x"]) / s)
+        node["y"] = max(0, (cy - self._builder_drag_data["off_y"]) / s)
+        self._builder_redraw()
+
+    def _builder_on_release(self, event):
+        self._builder_drag_data = None
+
+    def _builder_on_wheel(self, event):
+        if event.delta > 0:
+            self._builder_zoom(1.08)
+        else:
+            self._builder_zoom(0.93)
+
+    def _builder_on_double_click(self, event):
+        cx = self._builder_canvas.canvasx(event.x)
+        cy = self._builder_canvas.canvasy(event.y)
+        hit = self._builder_hit_test(cx, cy)
+        if hit >= 0:
+            self._builder_selected = hit
+            self._builder_show_props(hit)
+            self._builder_redraw()
+
+    def _builder_zoom(self, factor):
+        self._builder_scale = max(0.3, min(3.0, self._builder_scale * factor))
+        self._builder_redraw()
+
+    # ── Builder: add special nodes ────────────────────────────────────
+
+    def _builder_add_condition(self):
+        self._builder_add_special("condition", "Condicao\nSe X entao...")
+
+    def _builder_add_loop(self):
+        self._builder_add_special("loop", "Loop\nRepetir N vezes")
+
+    def _builder_add_wait(self):
+        self._builder_add_special("wait", "Espera\nAguardar tela mudar")
+
+    def _builder_add_special(self, node_type, label):
+        # Place after last node
+        if self._builder_nodes:
+            last = self._builder_nodes[-1]
+            x = last["x"] + last["w"] + self.NODE_GAP_X
+            y = last["y"]
+        else:
+            x, y = self.CANVAS_PAD, self.CANVAS_PAD
+
+        new_idx = len(self._builder_nodes)
+        node = {
+            "id": new_idx,
+            "step": new_idx + 1,
+            "type": node_type,
+            "action": node_type,
+            "label": label,
+            "desc": "",
+            "x": x, "y": y,
+            "w": self.NODE_W, "h": self.NODE_H,
+            "extra": {},
+        }
+        self._builder_nodes.append(node)
+
+        # Connect from previous
+        if new_idx > 0:
+            self._builder_connections.append((new_idx - 1, new_idx))
+
+        self._builder_selected = new_idx
+        self._builder_show_props(new_idx)
+        self._builder_redraw()
+
+    def _builder_delete_selected(self):
+        idx = self._builder_selected
+        if idx < 0 or idx >= len(self._builder_nodes):
+            return
+
+        # Remove connections involving this node
+        self._builder_connections = [
+            (a, b) for a, b in self._builder_connections
+            if a != idx and b != idx
+        ]
+        # Reindex connections
+        self._builder_connections = [
+            (a if a < idx else a - 1, b if b < idx else b - 1)
+            for a, b in self._builder_connections
+        ]
+
+        # Reconnect neighbors
+        prev = [a for a, b in self._builder_connections if b == idx - 1] if idx > 0 else []
+        nxt = [b for a, b in self._builder_connections if a == idx] if idx < len(self._builder_nodes) - 1 else []
+
+        self._builder_nodes.pop(idx)
+        self._builder_selected = -1
+        self._builder_clear_props()
+        self._builder_redraw()
+
+    # ── Builder: properties panel ─────────────────────────────────────
+
+    def _builder_clear_props(self):
+        for w in self._prop_frame.winfo_children():
+            w.destroy()
+        ctk.CTkLabel(self._prop_frame, text="Selecione um no",
+                     text_color=MUTED, font=ctk.CTkFont(size=11)).pack(pady=20)
+
+    def _builder_show_props(self, idx):
+        for w in self._prop_frame.winfo_children():
+            w.destroy()
+
+        if idx < 0 or idx >= len(self._builder_nodes):
+            self._builder_clear_props()
+            return
+
+        node = self._builder_nodes[idx]
+        f = self._prop_frame
+
+        # Node type badge
+        colors = self._NODE_COLORS.get(node["type"], self._NODE_COLORS["default"])
+        ctk.CTkLabel(f, text=f"  {node['type'].upper()}  ",
+                     fg_color=colors[0], corner_radius=6,
+                     font=ctk.CTkFont(size=12, weight="bold"),
+                     text_color="white").pack(anchor="w", pady=(0, 8))
+
+        # Step number
+        ctk.CTkLabel(f, text=f"Passo #{node['step']}", text_color=TEXT,
+                     font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", pady=(0, 4))
+
+        # Description
+        ctk.CTkLabel(f, text="Descricao:", text_color=DIM,
+                     font=ctk.CTkFont(size=11)).pack(anchor="w", pady=(8, 2))
+        desc_entry = ctk.CTkTextbox(f, height=60, font=ctk.CTkFont(size=11),
+                                     fg_color="#0a0a1a", corner_radius=6)
+        desc_entry.pack(fill="x", pady=(0, 8))
+        desc_entry.insert("0.0", node.get("desc", ""))
+        desc_entry.bind("<FocusOut>", lambda e, i=idx, w=desc_entry: self._builder_update_desc(i, w))
+
+        # Type-specific fields
+        if node["type"] == "condition":
+            ctk.CTkLabel(f, text="Condicao (se...):", text_color=DIM,
+                         font=ctk.CTkFont(size=11)).pack(anchor="w", pady=(4, 2))
+            cond_entry = ctk.CTkEntry(f, placeholder_text="Ex: valor > 5000",
+                                       font=ctk.CTkFont(size=11))
+            cond_entry.pack(fill="x", pady=(0, 4))
+            if node["extra"].get("condition"):
+                cond_entry.insert(0, node["extra"]["condition"])
+            cond_entry.bind("<FocusOut>",
+                            lambda e, i=idx, w=cond_entry: self._builder_set_extra(i, "condition", w.get()))
+
+            ctk.CTkLabel(f, text="Senao:", text_color=DIM,
+                         font=ctk.CTkFont(size=11)).pack(anchor="w", pady=(4, 2))
+            else_entry = ctk.CTkEntry(f, placeholder_text="Ex: enviar para aprovacao",
+                                       font=ctk.CTkFont(size=11))
+            else_entry.pack(fill="x", pady=(0, 4))
+            if node["extra"].get("else_action"):
+                else_entry.insert(0, node["extra"]["else_action"])
+            else_entry.bind("<FocusOut>",
+                            lambda e, i=idx, w=else_entry: self._builder_set_extra(i, "else_action", w.get()))
+
+        elif node["type"] == "loop":
+            ctk.CTkLabel(f, text="Repetir:", text_color=DIM,
+                         font=ctk.CTkFont(size=11)).pack(anchor="w", pady=(4, 2))
+            loop_type = ctk.CTkComboBox(f, values=[
+                "Para cada linha da planilha",
+                "Ate condicao ser verdadeira",
+                "N vezes",
+            ], font=ctk.CTkFont(size=11), width=240)
+            loop_type.pack(fill="x", pady=(0, 4))
+            if node["extra"].get("loop_type"):
+                loop_type.set(node["extra"]["loop_type"])
+            loop_type.bind("<<ComboboxSelected>>",
+                           lambda e, i=idx, w=loop_type: self._builder_set_extra(i, "loop_type", w.get()))
+
+            ctk.CTkLabel(f, text="Quantidade / Condicao:", text_color=DIM,
+                         font=ctk.CTkFont(size=11)).pack(anchor="w", pady=(4, 2))
+            loop_val = ctk.CTkEntry(f, placeholder_text="Ex: 10 ou 'ate acabar linhas'",
+                                     font=ctk.CTkFont(size=11))
+            loop_val.pack(fill="x", pady=(0, 4))
+            if node["extra"].get("loop_value"):
+                loop_val.insert(0, node["extra"]["loop_value"])
+            loop_val.bind("<FocusOut>",
+                          lambda e, i=idx, w=loop_val: self._builder_set_extra(i, "loop_value", w.get()))
+
+        elif node["type"] == "wait":
+            ctk.CTkLabel(f, text="Esperar por:", text_color=DIM,
+                         font=ctk.CTkFont(size=11)).pack(anchor="w", pady=(4, 2))
+            wait_type = ctk.CTkComboBox(f, values=[
+                "Tela mudar",
+                "Elemento aparecer",
+                "Tempo fixo (segundos)",
+                "Pagina carregar",
+            ], font=ctk.CTkFont(size=11), width=240)
+            wait_type.pack(fill="x", pady=(0, 4))
+            if node["extra"].get("wait_type"):
+                wait_type.set(node["extra"]["wait_type"])
+
+            ctk.CTkLabel(f, text="Timeout (seg):", text_color=DIM,
+                         font=ctk.CTkFont(size=11)).pack(anchor="w", pady=(4, 2))
+            timeout_entry = ctk.CTkEntry(f, placeholder_text="10", font=ctk.CTkFont(size=11))
+            timeout_entry.pack(fill="x", pady=(0, 4))
+            if node["extra"].get("timeout"):
+                timeout_entry.insert(0, str(node["extra"]["timeout"]))
+
+        # Variable toggle
+        ctk.CTkFrame(f, fg_color=MUTED, height=1).pack(fill="x", pady=12)
+
+        sv = self._step_vars.get(node["step"], {})
+        is_var = ctk.BooleanVar(value=sv.get("is_variable", False))
+        ctk.CTkCheckBox(f, text="Marcar como Variavel",
+                        variable=is_var, font=ctk.CTkFont(size=11),
+                        fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                        command=lambda i=idx, v=is_var: self._builder_toggle_var(i, v.get())
+                        ).pack(anchor="w", pady=(0, 4))
+
+        if sv.get("is_variable"):
+            var_name_entry = ctk.CTkEntry(f, placeholder_text="Nome da variavel",
+                                           font=ctk.CTkFont(size=11))
+            var_name_entry.pack(fill="x", pady=(0, 4))
+            if sv.get("var_name"):
+                var_name_entry.insert(0, sv["var_name"])
+
+        # Note
+        ctk.CTkLabel(f, text="Nota para o dev:", text_color=DIM,
+                     font=ctk.CTkFont(size=11)).pack(anchor="w", pady=(8, 2))
+        note_entry = ctk.CTkEntry(f, placeholder_text="Instrucoes especiais...",
+                                   font=ctk.CTkFont(size=11))
+        note_entry.pack(fill="x", pady=(0, 4))
+        if sv.get("note"):
+            note_entry.insert(0, sv["note"])
+
+    def _builder_update_desc(self, idx, widget):
+        if idx < len(self._builder_nodes):
+            self._builder_nodes[idx]["desc"] = widget.get("0.0", "end").strip()
+
+    def _builder_set_extra(self, idx, key, value):
+        if idx < len(self._builder_nodes):
+            self._builder_nodes[idx]["extra"][key] = value
+
+    def _builder_toggle_var(self, idx, is_var):
+        if idx < len(self._builder_nodes):
+            step_num = self._builder_nodes[idx]["step"]
+            if step_num not in self._step_vars:
+                self._step_vars[step_num] = {}
+            self._step_vars[step_num]["is_variable"] = is_var
+            self._builder_show_props(idx)
+            self._builder_redraw()
 
     # ── CONFIG PAGE ───────────────────────────────────────────────────
 
