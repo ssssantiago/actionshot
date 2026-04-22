@@ -1,991 +1,877 @@
-"""GUI - Modern dark-themed interface for ActionShot."""
+"""ActionShot — User-friendly desktop app for recording automation requests.
+
+Flow for end users:
+1. Open app → click "Gravar"
+2. Do the workflow on their machine
+3. Review steps, mark variables, add notes
+4. Click "Enviar pro Dev" → packages everything for the developer
+"""
 
 import json
 import os
+import shutil
 import threading
 import time
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import filedialog, messagebox
 
-from PIL import Image, ImageTk, ImageDraw
+import customtkinter as ctk
+from PIL import Image, ImageTk
 
 from .recorder import Recorder
-from .replay import Replayer
-from .generator import ScriptGenerator
-from .ai_agent import AIAgent
 
-# Optional multi-recording support
+# Optional imports — app works without them
 try:
-    from .multi_recorder import MultiRecordingSession, MultiRecordingDiff
-    HAS_MULTI_RECORDING = True
+    from .patterns import PatternDetector
 except Exception:
-    HAS_MULTI_RECORDING = False
+    PatternDetector = None
+
+try:
+    from .ir_compiler import IRCompiler
+except Exception:
+    IRCompiler = None
 
 
-# ── Color palette ─────────────────────────────────────────────────────
+# ── Theme ─────────────────────────────────────────────────────────────
 
-C = {
-    "bg":           "#0c0c1d",
-    "bg_card":      "#141432",
-    "bg_card_alt":  "#1a1a3e",
-    "bg_input":     "#0a0a1a",
-    "accent":       "#7c3aed",
-    "accent_hover": "#9b5de5",
-    "accent_dim":   "#5b21b6",
-    "red":          "#ef4444",
-    "red_glow":     "#dc2626",
-    "green":        "#22c55e",
-    "green_dim":    "#16a34a",
-    "blue":         "#3b82f6",
-    "yellow":       "#eab308",
-    "text":         "#e2e8f0",
-    "text_dim":     "#94a3b8",
-    "text_muted":   "#475569",
-    "border":       "#1e1e4a",
-    "border_light": "#2d2d6b",
-    "white":        "#ffffff",
-}
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("blue")
 
-FONT = "Segoe UI"
-MONO = "Consolas"  # safe default, Cascadia checked at runtime
+ACCENT = "#7c3aed"
+ACCENT_HOVER = "#9b5de5"
+RED = "#ef4444"
+GREEN = "#22c55e"
+BLUE = "#3b82f6"
+YELLOW = "#f59e0b"
+BG = "#0f0e17"
+CARD = "#1a1a2e"
+TEXT = "#fffffe"
+DIM = "#94a3b8"
+MUTED = "#475569"
 
 
-# ── Custom widgets ────────────────────────────────────────────────────
+# ── Main App ──────────────────────────────────────────────────────────
 
-class GlowButton(tk.Frame):
-    """Custom button with hover glow effect using Frame+Label."""
-
-    def __init__(self, parent, text="", icon="", color=C["accent"],
-                 hover_color=C["accent_hover"], text_color=C["white"],
-                 command=None, width=160, height=42, font_size=11, **kw):
-        kw.pop("bg", None)
-        super().__init__(parent, **kw)
-
-        self._color = color
-        self._hover_color = hover_color
-        self._text_color = text_color
-        self._command = command
-        self._font_size = font_size
-        self._icon = icon
-
-        label_text = f"{icon}  {text}" if icon else text
-
-        self._label = tk.Label(
-            self, text=label_text, bg=color, fg=text_color,
-            font=(FONT, font_size, "bold"),
-            width=max(width // 10, 8), height=1,
-            padx=12, pady=6, cursor="hand2",
-        )
-        self._label.pack(fill="both", expand=True)
-
-        self._label.bind("<Enter>", self._on_enter)
-        self._label.bind("<Leave>", self._on_leave)
-        self._label.bind("<ButtonPress-1>", self._on_press)
-        self._label.bind("<ButtonRelease-1>", self._on_release)
-
-    def _on_enter(self, e):
-        self._label.configure(bg=self._hover_color)
-
-    def _on_leave(self, e):
-        self._label.configure(bg=self._color)
-
-    def _on_press(self, e):
-        self._label.configure(bg=self._color)
-
-    def _on_release(self, e):
-        self._label.configure(bg=self._hover_color)
-        if self._command:
-            self._command()
-
-    def set_text(self, text):
-        label_text = f"{self._icon}  {text}" if self._icon else text
-        self._label.configure(text=label_text)
-
-    def set_color(self, color, hover_color=None):
-        self._color = color
-        self._hover_color = hover_color or color
-        self._label.configure(bg=color)
-
-
-class PulsingDot(tk.Canvas):
-    """Animated recording indicator."""
-
-    def __init__(self, parent, size=14, **kw):
-        super().__init__(parent, width=size, height=size,
-                         bg=parent["bg"], highlightthickness=0, **kw)
-        self._size = size
-        self._alpha = 1.0
-        self._growing = False
-        self._active = False
-        self.after(10, self._draw_idle)
-
-    def _draw_idle(self):
-        self.delete("all")
-        r = self._size // 2 - 2
-        cx, cy = self._size // 2, self._size // 2
-        self.create_oval(cx - r, cy - r, cx + r, cy + r, fill=C["text_muted"], outline="")
-
-    def start(self):
-        self._active = True
-        self._pulse()
-
-    def stop(self):
-        self._active = False
-        self._draw_idle()
-
-    def _pulse(self):
-        if not self._active:
-            return
-        self.delete("all")
-        r = self._size // 2 - 2
-        cx, cy = self._size // 2, self._size // 2
-
-        # Outer glow
-        gr = int(r + 3 * self._alpha)
-        glow_colors = ["#dc26264d", "#dc262633", "#dc262619"]
-        for i, gc in enumerate(glow_colors):
-            er = gr + i * 2
-            self.create_oval(cx - er, cy - er, cx + er, cy + er, fill="", outline=gc, width=1)
-
-        self.create_oval(cx - r, cy - r, cx + r, cy + r, fill=C["red"], outline="")
-
-        if self._growing:
-            self._alpha += 0.08
-            if self._alpha >= 1.0:
-                self._growing = False
-        else:
-            self._alpha -= 0.08
-            if self._alpha <= 0.2:
-                self._growing = True
-
-        self.after(50, self._pulse)
-
-
-class StepCard(tk.Frame):
-    """A single step displayed as a card in the step list."""
-
-    def __init__(self, parent, step_num, action, description, selected=False, on_click=None, **kw):
-        bg = C["accent_dim"] if selected else C["bg_card"]
-        super().__init__(parent, bg=bg, padx=10, pady=6, **kw)
-
-        self._on_click = on_click
-        self._selected = selected
-        self._bg = bg
-
-        top = tk.Frame(self, bg=bg)
-        top.pack(fill="x")
-
-        # Step number badge
-        action_colors = {
-            "click": C["red"], "drag": "#FF6600", "scroll": C["blue"],
-            "keypress": C["yellow"],
-        }
-        badge_color = C["text_muted"]
-        for key, col in action_colors.items():
-            if key in action:
-                badge_color = col
-                break
-
-        tk.Label(top, text=f" {step_num:03d} ", bg=badge_color, fg=C["white"],
-                 font=(MONO, 8, "bold"), padx=4, pady=1).pack(side="left")
-
-        action_short = action.replace("_click", "").replace("left", "L").replace("right", "R").replace("middle", "M")
-        tk.Label(top, text=f"  {action_short}", bg=bg, fg=badge_color,
-                 font=(MONO, 9, "bold")).pack(side="left")
-
-        # Description
-        desc_text = description[:55] + "..." if len(description) > 55 else description
-        tk.Label(self, text=desc_text, bg=bg, fg=C["text_dim"] if not selected else C["text"],
-                 font=(FONT, 9), anchor="w").pack(fill="x", pady=(2, 0))
-
-        # Bind click on all children
-        self.bind("<Button-1>", self._click)
-        for child in self.winfo_children():
-            child.bind("<Button-1>", self._click)
-            for sub in child.winfo_children():
-                sub.bind("<Button-1>", self._click)
-
-    def _click(self, e=None):
-        if self._on_click:
-            self._on_click()
-
-
-# ── Main GUI ──────────────────────────────────────────────────────────
-
-class ActionShotGUI:
+class ActionShotApp(ctk.CTk):
     def __init__(self):
-        self.root = tk.Tk()
-        self.root.title("ActionShot")
-        self.root.geometry("960x700")
-        self.root.minsize(800, 600)
-        self.root.configure(bg=C["bg"])
+        super().__init__()
 
-        # Try to set dark title bar on Windows
+        self.title("ActionShot")
+        self.geometry("1000x700")
+        self.minsize(900, 650)
+        self.configure(fg_color=BG)
+
+        # Try dark title bar on Windows
         try:
             from ctypes import windll, byref, c_int
-            self.root.update()
-            hwnd = windll.user32.GetParent(self.root.winfo_id())
+            self.update()
+            hwnd = windll.user32.GetParent(self.winfo_id())
             windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, byref(c_int(2)), 4)
         except Exception:
             pass
 
+        # State
         self.recorder = None
         self.recording = False
-        self._preview_images = []
-        self._step_cards = []
-        self._selected_step_idx = -1
-        self._recording_start_time = None
+        self._session_path = None
+        self._steps = []
+        self._step_vars = {}       # step_num -> {"is_variable": bool, "var_name": str, "note": str}
+        self._preview_refs = []    # keep PhotoImage refs
+        self._timer_start = None
         self._timer_id = None
+        self._current_page = "home"
 
-        # Multi-recording state
-        self._multi_session = None
-        self._multi_current = 0
-        self._multi_total = 0
-        self._multi_recording_active = False
+        self._build_nav()
+        self._build_pages()
+        self._show_page("home")
 
-        self._build_ui()
+    # ── Navigation ────────────────────────────────────────────────────
 
-    def _build_ui(self):
-        # ── Top bar ──────────────────────────────────────────────────
-        topbar = tk.Frame(self.root, bg=C["bg_card"], height=56)
-        topbar.pack(fill="x")
-        topbar.pack_propagate(False)
+    def _build_nav(self):
+        self._nav = ctk.CTkFrame(self, fg_color=CARD, width=200, corner_radius=0)
+        self._nav.pack(side="left", fill="y")
+        self._nav.pack_propagate(False)
 
         # Logo
-        logo_frame = tk.Frame(topbar, bg=C["bg_card"])
-        logo_frame.pack(side="left", padx=20)
-
-        tk.Label(logo_frame, text="ActionShot", bg=C["bg_card"], fg=C["accent"],
-                 font=(FONT, 18, "bold")).pack(side="left")
-        tk.Label(logo_frame, text="  v0.1", bg=C["bg_card"], fg=C["text_muted"],
-                 font=(FONT, 10)).pack(side="left", pady=(4, 0))
-
-        # Recording indicator in top bar
-        rec_frame = tk.Frame(topbar, bg=C["bg_card"])
-        rec_frame.pack(side="right", padx=20)
-
-        self._rec_dot = PulsingDot(rec_frame)
-        self._rec_dot.pack(side="left", padx=(0, 8))
-
-        self._rec_status = tk.Label(rec_frame, text="Idle", bg=C["bg_card"],
-                                    fg=C["text_muted"], font=(FONT, 10))
-        self._rec_status.pack(side="left")
-
-        self._rec_timer = tk.Label(rec_frame, text="", bg=C["bg_card"],
-                                   fg=C["text_dim"], font=(MONO, 10))
-        self._rec_timer.pack(side="left", padx=(10, 0))
-
-        self._rec_steps = tk.Label(rec_frame, text="", bg=C["bg_card"],
-                                   fg=C["text_dim"], font=(MONO, 10))
-        self._rec_steps.pack(side="left", padx=(10, 0))
+        logo_frame = ctk.CTkFrame(self._nav, fg_color="transparent")
+        logo_frame.pack(fill="x", padx=16, pady=(20, 8))
+        ctk.CTkLabel(logo_frame, text="ActionShot", font=ctk.CTkFont(size=20, weight="bold"),
+                     text_color=ACCENT).pack(anchor="w")
+        ctk.CTkLabel(logo_frame, text="Gravador de Automacoes", font=ctk.CTkFont(size=11),
+                     text_color=MUTED).pack(anchor="w")
 
         # Separator
-        tk.Frame(self.root, bg=C["border"], height=1).pack(fill="x")
+        ctk.CTkFrame(self._nav, fg_color=MUTED, height=1).pack(fill="x", padx=16, pady=12)
 
-        # ── Main content ─────────────────────────────────────────────
-        main = tk.Frame(self.root, bg=C["bg"])
-        main.pack(fill="both", expand=True, padx=16, pady=12)
-
-        # Left column
-        left = tk.Frame(main, bg=C["bg"])
-        left.pack(side="left", fill="both", expand=True)
-
-        # ── Record card ──────────────────────────────────────────────
-        rec_card = tk.Frame(left, bg=C["bg_card"], padx=20, pady=16)
-        rec_card.pack(fill="x", pady=(0, 10))
-
-        rec_top = tk.Frame(rec_card, bg=C["bg_card"])
-        rec_top.pack(fill="x")
-
-        tk.Label(rec_top, text="Recording", bg=C["bg_card"], fg=C["text"],
-                 font=(FONT, 13, "bold")).pack(side="left")
-
-        # Output dir (compact)
-        dir_f = tk.Frame(rec_top, bg=C["bg_card"])
-        dir_f.pack(side="right")
-        self.output_var = tk.StringVar(value="recordings")
-        tk.Label(dir_f, text="Output:", bg=C["bg_card"], fg=C["text_muted"],
-                 font=(FONT, 9)).pack(side="left")
-        out_entry = tk.Entry(dir_f, textvariable=self.output_var, width=16,
-                             bg=C["bg_input"], fg=C["text"], insertbackground=C["text"],
-                             font=(MONO, 9), bd=0, relief="flat")
-        out_entry.pack(side="left", padx=(5, 3), ipady=3)
-
-        # Record button
-        btn_row = tk.Frame(rec_card, bg=C["bg_card"])
-        btn_row.pack(fill="x", pady=(12, 4))
-
-        self.record_btn = GlowButton(
-            btn_row, text="Start Recording", icon="\u23fa",
-            color=C["accent"], hover_color=C["accent_hover"],
-            command=self._toggle_recording, width=200, height=46, font_size=12,
-        )
-        self.record_btn.pack(side="left")
-
-        # Options
-        self._video_var = tk.BooleanVar(value=False)
-        self._ocr_var = tk.BooleanVar(value=True)
-
-        opt_f = tk.Frame(btn_row, bg=C["bg_card"])
-        opt_f.pack(side="left", padx=(20, 0))
-        tk.Checkbutton(opt_f, text="Video", variable=self._video_var,
-                       bg=C["bg_card"], fg=C["text_dim"], selectcolor=C["bg_input"],
-                       activebackground=C["bg_card"], activeforeground=C["text"],
-                       font=(FONT, 9)).pack(anchor="w")
-        tk.Checkbutton(opt_f, text="OCR", variable=self._ocr_var,
-                       bg=C["bg_card"], fg=C["text_dim"], selectcolor=C["bg_input"],
-                       activebackground=C["bg_card"], activeforeground=C["text"],
-                       font=(FONT, 9)).pack(anchor="w")
-
-        # Hotkey hint
-        tk.Label(rec_card, text="Win+Shift+R  toggle    Win+Shift+P  pause    ESC  stop",
-                 bg=C["bg_card"], fg=C["text_muted"], font=(MONO, 8)).pack(anchor="w", pady=(4, 0))
-
-        # ── Tools card ───────────────────────────────────────────────
-        tools_card = tk.Frame(left, bg=C["bg_card"], padx=20, pady=16)
-        tools_card.pack(fill="x", pady=(0, 10))
-
-        tk.Label(tools_card, text="Tools", bg=C["bg_card"], fg=C["text"],
-                 font=(FONT, 13, "bold")).pack(anchor="w")
-
-        tools_grid = tk.Frame(tools_card, bg=C["bg_card"])
-        tools_grid.pack(fill="x", pady=(10, 0))
-
-        tools = [
-            ("\u25b6", "Replay", C["green"], C["green_dim"], self._replay_session),
-            ("\u2699", "Generate Script", C["blue"], "#2563eb", self._generate_script),
-            ("\u2728", "AI Prompt", C["accent"], C["accent_dim"], self._generate_ai_prompt),
-            ("\u21e1", "Export API", C["yellow"], "#ca8a04", self._export_api),
+        # Nav buttons
+        self._nav_btns = {}
+        nav_items = [
+            ("home", "Inicio"),
+            ("record", "Gravar"),
+            ("review", "Revisar Passos"),
+            ("config", "Configurar"),
+            ("send", "Enviar pro Dev"),
         ]
 
-        for i, (icon, text, color, hover, cmd) in enumerate(tools):
-            btn = GlowButton(tools_grid, text=text, icon=icon,
-                             color=color, hover_color=hover,
-                             command=cmd, width=145, height=38, font_size=10)
-            btn.grid(row=0, column=i, padx=(0, 8))
-
-        # ── Multi-Recording card ─────────────────────────────────────
-        multi_card = tk.Frame(left, bg=C["bg_card"], padx=20, pady=16)
-        multi_card.pack(fill="x", pady=(0, 10))
-
-        tk.Label(multi_card, text="Multi-Recording", bg=C["bg_card"], fg=C["text"],
-                 font=(FONT, 13, "bold")).pack(anchor="w")
-
-        if not HAS_MULTI_RECORDING:
-            tk.Label(multi_card, text="Multi-recording not available",
-                     bg=C["bg_card"], fg=C["red"], font=(FONT, 9)).pack(anchor="w", pady=(6, 0))
-        else:
-            # Workflow name entry
-            name_row = tk.Frame(multi_card, bg=C["bg_card"])
-            name_row.pack(fill="x", pady=(8, 4))
-            tk.Label(name_row, text="Workflow Name:", bg=C["bg_card"], fg=C["text_dim"],
-                     font=(FONT, 9)).pack(side="left")
-            self._multi_name_var = tk.StringVar(value="my_workflow")
-            tk.Entry(name_row, textvariable=self._multi_name_var, width=20,
-                     bg=C["bg_input"], fg=C["text"], insertbackground=C["text"],
-                     font=(MONO, 9), bd=0, relief="flat").pack(side="left", padx=(6, 0), ipady=3)
-
-            # Number of recordings spinbox
-            count_row = tk.Frame(multi_card, bg=C["bg_card"])
-            count_row.pack(fill="x", pady=(4, 8))
-            tk.Label(count_row, text="Number of recordings:", bg=C["bg_card"], fg=C["text_dim"],
-                     font=(FONT, 9)).pack(side="left")
-            self._multi_count_var = tk.IntVar(value=3)
-            tk.Spinbox(count_row, from_=2, to=10, textvariable=self._multi_count_var, width=4,
-                       bg=C["bg_input"], fg=C["text"], insertbackground=C["text"],
-                       font=(MONO, 9), bd=0, relief="flat",
-                       buttonbackground=C["bg_card_alt"]).pack(side="left", padx=(6, 0))
-
-            # Buttons row
-            multi_btn_row = tk.Frame(multi_card, bg=C["bg_card"])
-            multi_btn_row.pack(fill="x", pady=(4, 4))
-
-            self._multi_start_btn = GlowButton(
-                multi_btn_row, text="Start Multi-Recording", icon="\u23fa",
-                color=C["accent"], hover_color=C["accent_hover"],
-                command=self._multi_start, width=200, height=38, font_size=10,
+        for page_id, label in nav_items:
+            btn = ctk.CTkButton(
+                self._nav, text=f"  {label}", anchor="w",
+                font=ctk.CTkFont(size=13), height=40,
+                fg_color="transparent", hover_color=ACCENT,
+                text_color=DIM, corner_radius=8,
+                command=lambda p=page_id: self._show_page(p),
             )
-            self._multi_start_btn.pack(side="left", padx=(0, 8))
+            btn.pack(fill="x", padx=10, pady=2)
+            self._nav_btns[page_id] = btn
 
-            self._multi_next_btn = GlowButton(
-                multi_btn_row, text="Next Recording", icon="\u23ed",
-                color=C["blue"], hover_color="#2563eb",
-                command=self._multi_next, width=160, height=38, font_size=10,
-            )
-            self._multi_next_btn.pack(side="left", padx=(0, 8))
-            self._multi_next_btn._label.configure(state="disabled", fg=C["text_muted"])
-
-            # Second button row
-            multi_btn_row2 = tk.Frame(multi_card, bg=C["bg_card"])
-            multi_btn_row2.pack(fill="x", pady=(0, 4))
-
-            self._multi_finish_btn = GlowButton(
-                multi_btn_row2, text="Finish & Analyze", icon="\u2728",
-                color=C["green"], hover_color=C["green_dim"],
-                command=self._multi_finish, width=160, height=38, font_size=10,
-            )
-            self._multi_finish_btn.pack(side="left")
-            self._multi_finish_btn._label.configure(state="disabled", fg=C["text_muted"])
-
-            # Status label
-            self._multi_status = tk.Label(multi_card, text="Ready", bg=C["bg_card"],
-                                          fg=C["text_muted"], font=(FONT, 10))
-            self._multi_status.pack(anchor="w", pady=(4, 0))
-
-        # ── Log ──────────────────────────────────────────────────────
-        log_card = tk.Frame(left, bg=C["bg_card"], padx=16, pady=12)
-        log_card.pack(fill="both", expand=True)
-
-        log_header = tk.Frame(log_card, bg=C["bg_card"])
-        log_header.pack(fill="x", pady=(0, 6))
-        tk.Label(log_header, text="Activity Log", bg=C["bg_card"], fg=C["text"],
-                 font=(FONT, 11, "bold")).pack(side="left")
-
-        self.log_text = tk.Text(log_card, bg=C["bg_input"], fg=C["green"],
-                                font=(MONO, 9), bd=0, wrap="word",
-                                insertbackground=C["green"], padx=10, pady=8,
-                                height=6)
-        self.log_text.pack(fill="both", expand=True)
-        self.log_text.configure(state="disabled")
-        self._log("ActionShot ready.")
-
-        # ── Separator ────────────────────────────────────────────────
-        tk.Frame(main, bg=C["border"], width=1).pack(side="left", fill="y", padx=12)
-
-        # ── Right column: session browser ────────────────────────────
-        right = tk.Frame(main, bg=C["bg"], width=360)
-        right.pack(side="left", fill="both", expand=True)
-        right.pack_propagate(True)
-
-        # Session header
-        sess_header = tk.Frame(right, bg=C["bg"])
-        sess_header.pack(fill="x", pady=(0, 8))
-        tk.Label(sess_header, text="Sessions", bg=C["bg"], fg=C["text"],
-                 font=(FONT, 13, "bold")).pack(side="left")
-
-        GlowButton(sess_header, text="Refresh", color=C["bg_card_alt"],
-                   hover_color=C["border_light"], text_color=C["text_dim"],
-                   command=self._refresh_sessions, width=80, height=30, font_size=9
-                   ).pack(side="right")
-
-        # Session list
-        sess_list_frame = tk.Frame(right, bg=C["bg_card"])
-        sess_list_frame.pack(fill="x")
-
-        sess_scroll = tk.Frame(sess_list_frame, bg=C["bg_card"])
-        sess_scroll.pack(fill="x", padx=2, pady=2)
-
-        self.session_listbox = tk.Listbox(
-            sess_scroll, bg=C["bg_input"], fg=C["text"],
-            font=(MONO, 9), height=5, bd=0, relief="flat",
-            selectbackground=C["accent_dim"], selectforeground=C["white"],
-            activestyle="none", highlightthickness=0,
+        # Bottom info
+        self._nav_status = ctk.CTkLabel(
+            self._nav, text="Nenhuma gravacao", font=ctk.CTkFont(size=10),
+            text_color=MUTED,
         )
-        self.session_listbox.pack(fill="x", padx=4, pady=4)
-        self.session_listbox.bind("<<ListboxSelect>>", self._on_session_select)
+        self._nav_status.pack(side="bottom", padx=16, pady=16, anchor="w")
 
-        # Steps header
-        tk.Label(right, text="Steps", bg=C["bg"], fg=C["text"],
-                 font=(FONT, 11, "bold")).pack(anchor="w", pady=(12, 6))
+    def _show_page(self, page_id):
+        self._current_page = page_id
+        for pid, btn in self._nav_btns.items():
+            if pid == page_id:
+                btn.configure(fg_color=ACCENT, text_color=TEXT)
+            else:
+                btn.configure(fg_color="transparent", text_color=DIM)
 
-        # Scrollable step list
-        step_container = tk.Frame(right, bg=C["bg_card"])
-        step_container.pack(fill="x")
+        for pid, frame in self._pages.items():
+            if pid == page_id:
+                frame.pack(side="left", fill="both", expand=True)
+            else:
+                frame.pack_forget()
 
-        self._step_canvas = tk.Canvas(step_container, bg=C["bg_card"], highlightthickness=0, height=160)
-        step_scrollbar = tk.Scrollbar(step_container, orient="vertical", command=self._step_canvas.yview)
-        self._step_inner = tk.Frame(self._step_canvas, bg=C["bg_card"])
+        if page_id == "review" and self._session_path:
+            self._load_review()
+        if page_id == "send":
+            self._update_send_summary()
 
-        self._step_inner.bind("<Configure>",
-                              lambda e: self._step_canvas.configure(scrollregion=self._step_canvas.bbox("all")))
-        self._step_canvas.create_window((0, 0), window=self._step_inner, anchor="nw",
-                                        tags="inner")
-        self._step_canvas.configure(yscrollcommand=step_scrollbar.set)
+    # ── Pages ─────────────────────────────────────────────────────────
 
-        # Bind mouse wheel
-        self._step_canvas.bind("<Enter>",
-                               lambda e: self._step_canvas.bind_all("<MouseWheel>", self._on_step_scroll))
-        self._step_canvas.bind("<Leave>",
-                               lambda e: self._step_canvas.unbind_all("<MouseWheel>"))
+    def _build_pages(self):
+        self._pages = {}
+        self._build_home_page()
+        self._build_record_page()
+        self._build_review_page()
+        self._build_config_page()
+        self._build_send_page()
 
-        self._step_canvas.pack(side="left", fill="x", expand=True, padx=4, pady=4)
-        step_scrollbar.pack(side="right", fill="y")
+    # ── HOME PAGE ─────────────────────────────────────────────────────
 
-        # Resize inner frame width when canvas resizes
-        self._step_canvas.bind("<Configure>", self._on_step_canvas_resize)
+    def _build_home_page(self):
+        page = ctk.CTkFrame(self, fg_color=BG)
+        self._pages["home"] = page
 
-        # Preview
-        tk.Label(right, text="Preview", bg=C["bg"], fg=C["text"],
-                 font=(FONT, 11, "bold")).pack(anchor="w", pady=(12, 6))
+        # Hero
+        hero = ctk.CTkFrame(page, fg_color=CARD, corner_radius=16)
+        hero.pack(fill="x", padx=30, pady=(30, 20))
 
-        preview_container = tk.Frame(right, bg=C["bg_card"])
-        preview_container.pack(fill="both", expand=True)
+        ctk.CTkLabel(hero, text="Bem-vindo ao ActionShot",
+                     font=ctk.CTkFont(size=26, weight="bold"),
+                     text_color=TEXT).pack(padx=30, pady=(30, 8))
+        ctk.CTkLabel(hero, text="Grave o que voce faz no computador e envie para o dev transformar em automacao.",
+                     font=ctk.CTkFont(size=14), text_color=DIM,
+                     wraplength=600).pack(padx=30, pady=(0, 20))
 
-        self.preview_label = tk.Label(preview_container, bg=C["bg_input"],
-                                      text="Select a step", fg=C["text_muted"],
-                                      font=(FONT, 10))
-        self.preview_label.pack(fill="both", expand=True, padx=4, pady=4)
+        ctk.CTkButton(hero, text="Comecar a Gravar", font=ctk.CTkFont(size=16, weight="bold"),
+                      fg_color=ACCENT, hover_color=ACCENT_HOVER, height=50, corner_radius=12,
+                      command=lambda: self._show_page("record")).pack(padx=30, pady=(0, 30))
 
-        # Click preview to open full size
-        self.preview_label.bind("<Double-Button-1>", self._open_preview_full)
-        self._current_preview_path = None
+        # Steps guide
+        steps_frame = ctk.CTkFrame(page, fg_color="transparent")
+        steps_frame.pack(fill="x", padx=30, pady=10)
 
-        # ── State ────────────────────────────────────────────────────
-        self._sessions = {}
-        self._current_session_steps = []
-        self._current_session_path = None
+        guide = [
+            ("1", "Gravar", "Clique em Gravar e faca o workflow normalmente no seu computador."),
+            ("2", "Revisar", "Veja os passos capturados. Marque o que muda toda vez (variaveis)."),
+            ("3", "Configurar", "Adicione notas, descreva cenarios e excecoes."),
+            ("4", "Enviar", "Empacote tudo e envie para o desenvolvedor criar o RPA."),
+        ]
 
-        self._refresh_sessions()
+        for i, (num, title, desc) in enumerate(guide):
+            card = ctk.CTkFrame(steps_frame, fg_color=CARD, corner_radius=12)
+            card.grid(row=0, column=i, padx=8, pady=8, sticky="nsew")
+            steps_frame.columnconfigure(i, weight=1)
 
-    # ── Logging ───────────────────────────────────────────────────────
+            ctk.CTkLabel(card, text=num, font=ctk.CTkFont(size=28, weight="bold"),
+                         text_color=ACCENT).pack(padx=16, pady=(16, 4))
+            ctk.CTkLabel(card, text=title, font=ctk.CTkFont(size=14, weight="bold"),
+                         text_color=TEXT).pack(padx=16)
+            ctk.CTkLabel(card, text=desc, font=ctk.CTkFont(size=11),
+                         text_color=DIM, wraplength=180).pack(padx=16, pady=(4, 16))
 
-    def _log(self, msg: str):
-        self.log_text.configure(state="normal")
-        timestamp = time.strftime("%H:%M:%S")
-        self.log_text.insert("end", f"[{timestamp}] {msg}\n")
-        self.log_text.see("end")
-        self.log_text.configure(state="disabled")
+        # Recent sessions
+        recent_frame = ctk.CTkFrame(page, fg_color=CARD, corner_radius=12)
+        recent_frame.pack(fill="both", expand=True, padx=30, pady=(10, 30))
+        ctk.CTkLabel(recent_frame, text="Gravacoes Recentes",
+                     font=ctk.CTkFont(size=14, weight="bold"),
+                     text_color=TEXT).pack(anchor="w", padx=20, pady=(16, 8))
 
-    # ── Recording timer ───────────────────────────────────────────────
+        self._recent_list = ctk.CTkFrame(recent_frame, fg_color="transparent")
+        self._recent_list.pack(fill="both", expand=True, padx=20, pady=(0, 16))
 
-    def _start_timer(self):
-        self._recording_start_time = time.monotonic()
-        self._update_timer()
+        self._refresh_recent()
 
-    def _update_timer(self):
-        if not self.recording:
-            return
-        elapsed = time.monotonic() - self._recording_start_time
-        m, s = divmod(int(elapsed), 60)
-        h, m = divmod(m, 60)
-        self._rec_timer.configure(text=f"{h:02d}:{m:02d}:{s:02d}")
+    def _refresh_recent(self):
+        for w in self._recent_list.winfo_children():
+            w.destroy()
 
-        if self.recorder and self.recorder.session:
-            count = self.recorder.session.step_count
-            self._rec_steps.configure(text=f"{count} steps")
-
-        self._timer_id = self.root.after(500, self._update_timer)
-
-    def _stop_timer(self):
-        if self._timer_id:
-            self.root.after_cancel(self._timer_id)
-            self._timer_id = None
-        self._rec_timer.configure(text="")
-        self._rec_steps.configure(text="")
-
-    # ── Recording ─────────────────────────────────────────────────────
-
-    def _toggle_recording(self):
-        if not self.recording:
-            self.recording = True
-            self.record_btn.set_text("Stop Recording")
-            self.record_btn.set_color(C["red"], C["red_glow"])
-            self.record_btn._icon = "\u23f9"
-            self._rec_status.configure(text="Recording", fg=C["red"])
-            self._rec_dot.start()
-            self._log("Recording started")
-
-            output = self.output_var.get()
-            self.recorder = Recorder(
-                output_dir=output,
-                enable_video=self._video_var.get(),
-                enable_ocr=self._ocr_var.get(),
-            )
-
-            def _record():
-                self.recorder.start()
-                self.root.after(0, self._on_recording_stopped)
-
-            threading.Thread(target=_record, daemon=True).start()
-            self._start_timer()
-        else:
-            if self.recorder:
-                self.recorder.stop()
-
-    def _on_recording_stopped(self):
-        self.recording = False
-        self.record_btn.set_text("Start Recording")
-        self.record_btn.set_color(C["accent"], C["accent_hover"])
-        self.record_btn._icon = "\u23fa"
-        self._rec_status.configure(text="Idle", fg=C["text_muted"])
-        self._rec_dot.stop()
-        self._stop_timer()
-
-        if self.recorder and self.recorder.session:
-            self._log(f"Saved: {self.recorder.session.name} ({self.recorder.session.step_count} steps)")
-        self._refresh_sessions()
-
-    # ── Session browser ───────────────────────────────────────────────
-
-    def _refresh_sessions(self):
-        self.session_listbox.delete(0, "end")
-        self._sessions.clear()
-
-        output_dir = self.output_var.get()
-        if not os.path.exists(output_dir):
+        rec_dir = "recordings"
+        if not os.path.exists(rec_dir):
+            ctk.CTkLabel(self._recent_list, text="Nenhuma gravacao encontrada.",
+                         text_color=MUTED).pack(pady=10)
             return
 
         sessions = []
-        for name in os.listdir(output_dir):
-            path = os.path.join(output_dir, name)
+        for name in os.listdir(rec_dir):
+            path = os.path.join(rec_dir, name)
             summary = os.path.join(path, "session_summary.json")
             if os.path.isdir(path) and os.path.exists(summary):
                 try:
                     with open(summary, "r") as f:
                         data = json.load(f)
-                    steps = data.get("total_steps", 0)
+                    sessions.append((name, path, data.get("total_steps", 0)))
                 except Exception:
-                    steps = "?"
-                sessions.append((name, path, steps))
+                    pass
 
         sessions.sort(reverse=True)
 
-        for name, path, steps in sessions:
-            display = f"  {name}  ({steps} steps)"
-            self._sessions[display] = path
-            self.session_listbox.insert("end", display)
-
-    def _on_session_select(self, event=None):
-        sel = self.session_listbox.curselection()
-        if not sel:
+        if not sessions:
+            ctk.CTkLabel(self._recent_list, text="Nenhuma gravacao encontrada.",
+                         text_color=MUTED).pack(pady=10)
             return
 
-        display = self.session_listbox.get(sel[0])
-        path = self._sessions.get(display)
-        if not path:
-            return
+        for name, path, steps in sessions[:6]:
+            row = ctk.CTkFrame(self._recent_list, fg_color="#1e1e3a", corner_radius=8)
+            row.pack(fill="x", pady=2)
+            ctk.CTkLabel(row, text=name, font=ctk.CTkFont(size=12),
+                         text_color=TEXT).pack(side="left", padx=12, pady=8)
+            ctk.CTkLabel(row, text=f"{steps} passos", font=ctk.CTkFont(size=11),
+                         text_color=MUTED).pack(side="left", padx=8)
+            ctk.CTkButton(row, text="Abrir", width=60, height=28, corner_radius=6,
+                          fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                          font=ctk.CTkFont(size=11),
+                          command=lambda p=path: self._open_session(p)
+                          ).pack(side="right", padx=12, pady=6)
 
-        self._current_session_path = path
-        self._load_session_steps(path)
+    def _open_session(self, path):
+        self._session_path = path
+        self._load_steps()
+        self._nav_status.configure(text=f"{os.path.basename(path)}")
+        self._show_page("review")
 
-    def _load_session_steps(self, session_path: str):
-        # Clear old cards
-        for card in self._step_cards:
-            card.destroy()
-        self._step_cards.clear()
-        self._current_session_steps = []
-        self._selected_step_idx = -1
+    # ── RECORD PAGE ───────────────────────────────────────────────────
 
-        summary_path = os.path.join(session_path, "session_summary.json")
-        try:
-            with open(summary_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except Exception:
-            return
+    def _build_record_page(self):
+        page = ctk.CTkFrame(self, fg_color=BG)
+        self._pages["record"] = page
 
-        steps = data.get("steps", [])
-        self._current_session_steps = steps
+        center = ctk.CTkFrame(page, fg_color="transparent")
+        center.place(relx=0.5, rely=0.45, anchor="center")
 
-        for i, step_info in enumerate(steps):
-            step_num = step_info.get("step", 0)
-            action = step_info.get("action", "")
-            desc = step_info.get("description", "")
-
-            card = StepCard(
-                self._step_inner, step_num=step_num, action=action,
-                description=desc, selected=False,
-                on_click=lambda idx=i: self._select_step(idx),
-            )
-            card.pack(fill="x", pady=(0, 2))
-            self._step_cards.append(card)
-
-    def _select_step(self, idx):
-        if idx == self._selected_step_idx:
-            return
-
-        self._selected_step_idx = idx
-
-        # Rebuild cards with selection
-        session_path = self._current_session_path
-        for card in self._step_cards:
-            card.destroy()
-        self._step_cards.clear()
-
-        for i, step_info in enumerate(self._current_session_steps):
-            step_num = step_info.get("step", 0)
-            action = step_info.get("action", "")
-            desc = step_info.get("description", "")
-
-            card = StepCard(
-                self._step_inner, step_num=step_num, action=action,
-                description=desc, selected=(i == idx),
-                on_click=lambda idx2=i: self._select_step(idx2),
-            )
-            card.pack(fill="x", pady=(0, 2))
-            self._step_cards.append(card)
-
-        # Load screenshot preview
-        step_info = self._current_session_steps[idx]
-        step_num = step_info.get("step", 0)
-        meta_path = os.path.join(session_path, f"{step_num:03d}_metadata.json")
-
-        if os.path.exists(meta_path):
-            try:
-                with open(meta_path, "r", encoding="utf-8") as f:
-                    meta = json.load(f)
-                screenshot_name = meta.get("screenshot", "")
-                screenshot_path = os.path.join(session_path, screenshot_name)
-                if os.path.exists(screenshot_path):
-                    self._show_preview(screenshot_path)
-            except Exception:
-                pass
-
-    def _on_step_scroll(self, event):
-        self._step_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
-    def _on_step_canvas_resize(self, event):
-        self._step_canvas.itemconfig("inner", width=event.width)
-
-    # ── Preview ───────────────────────────────────────────────────────
-
-    def _show_preview(self, image_path: str):
-        self._current_preview_path = image_path
-        try:
-            img = Image.open(image_path)
-            max_w = max(self.preview_label.winfo_width() - 10, 300)
-            max_h = max(self.preview_label.winfo_height() - 10, 150)
-            img.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
-            photo = ImageTk.PhotoImage(img)
-            self._preview_images = [photo]
-            self.preview_label.configure(image=photo, text="")
-        except Exception as e:
-            self.preview_label.configure(image="", text=f"Error: {e}")
-
-    def _open_preview_full(self, event=None):
-        """Open full-size screenshot in a new window."""
-        if not self._current_preview_path or not os.path.exists(self._current_preview_path):
-            return
-
-        win = tk.Toplevel(self.root)
-        win.title("ActionShot - Preview")
-        win.configure(bg=C["bg"])
-
-        try:
-            from ctypes import windll, byref, c_int
-            win.update()
-            hwnd = windll.user32.GetParent(win.winfo_id())
-            windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, byref(c_int(2)), 4)
-        except Exception:
-            pass
-
-        img = Image.open(self._current_preview_path)
-
-        # Fit to 80% of screen
-        screen_w = self.root.winfo_screenwidth()
-        screen_h = self.root.winfo_screenheight()
-        max_w = int(screen_w * 0.8)
-        max_h = int(screen_h * 0.8)
-        img.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
-
-        photo = ImageTk.PhotoImage(img)
-        self._preview_images.append(photo)
-
-        lbl = tk.Label(win, image=photo, bg=C["bg"])
-        lbl.pack(fill="both", expand=True)
-
-        win.geometry(f"{img.width + 20}x{img.height + 20}")
-        win.bind("<Escape>", lambda e: win.destroy())
-
-    # ── Tool actions ──────────────────────────────────────────────────
-
-    def _get_selected_session(self) -> str | None:
-        if self._current_session_path:
-            return self._current_session_path
-        path = filedialog.askdirectory(title="Select session folder")
-        if path and os.path.exists(os.path.join(path, "session_summary.json")):
-            return path
-        elif path:
-            messagebox.showerror("Error", "No session_summary.json found.")
-        return None
-
-    def _replay_session(self):
-        session_path = self._get_selected_session()
-        if not session_path:
-            return
-        self._log(f"Replaying: {os.path.basename(session_path)}")
-
-        def _replay():
-            try:
-                replayer = Replayer(session_path, speed=1.0)
-                replayer.run()
-                self.root.after(0, lambda: self._log("Replay complete."))
-            except Exception as e:
-                self.root.after(0, lambda: self._log(f"Replay error: {e}"))
-
-        threading.Thread(target=_replay, daemon=True).start()
-
-    def _generate_script(self):
-        session_path = self._get_selected_session()
-        if not session_path:
-            return
-        try:
-            gen = ScriptGenerator(session_path)
-            out = gen.generate()
-            self._log(f"Script generated: {os.path.basename(out)}")
-        except Exception as e:
-            self._log(f"Error: {e}")
-
-    def _generate_ai_prompt(self):
-        session_path = self._get_selected_session()
-        if not session_path:
-            return
-        try:
-            agent = AIAgent(session_path)
-            out = agent.generate_ai_prompt()
-            self._log(f"AI prompt: {os.path.basename(out)}")
-        except Exception as e:
-            self._log(f"Error: {e}")
-
-    def _export_api(self):
-        session_path = self._get_selected_session()
-        if not session_path:
-            return
-        include_imgs = messagebox.askyesno("Screenshots", "Include screenshots in payload?")
-        try:
-            agent = AIAgent(session_path)
-            agent.export_for_api(include_screenshots=include_imgs)
-            self._log("API payload exported.")
-        except Exception as e:
-            self._log(f"Error: {e}")
-
-    # ── Multi-recording ─────────────────────────────────────────────
-
-    def _multi_start(self):
-        """Begin the multi-recording session."""
-        if not HAS_MULTI_RECORDING:
-            self._log("Multi-recording module not available.")
-            return
-        if self._multi_recording_active:
-            return
-
-        name = self._multi_name_var.get().strip() or "my_workflow"
-        count = self._multi_count_var.get()
-        output = self.output_var.get()
-
-        self._multi_total = count
-        self._multi_current = 1
-        self._multi_recording_active = True
-        self._multi_session = MultiRecordingSession(
-            workflow_name=name,
-            num_recordings=count,
-            output_dir=output,
+        # Big record button
+        self._rec_btn = ctk.CTkButton(
+            center, text="GRAVAR", width=200, height=200,
+            corner_radius=100, font=ctk.CTkFont(size=24, weight="bold"),
+            fg_color=RED, hover_color="#dc2626", text_color="white",
+            command=self._toggle_recording,
         )
+        self._rec_btn.pack()
 
-        self._log(f"Multi-recording started: '{name}' ({count} recordings)")
-        self._multi_status.configure(
-            text=f"Recording 1 of {count}", fg=C["yellow"],
+        self._rec_label = ctk.CTkLabel(
+            center, text="Clique para comecar a gravar.\nFaca seu workflow normalmente.\nPressione ESC para parar.",
+            font=ctk.CTkFont(size=13), text_color=DIM, justify="center",
         )
-        self._multi_start_btn._label.configure(state="disabled", fg=C["text_muted"])
-        self._multi_next_btn._label.configure(state="disabled", fg=C["text_muted"])
-        self._multi_finish_btn._label.configure(state="disabled", fg=C["text_muted"])
+        self._rec_label.pack(pady=(20, 0))
 
-        # Start the first recording
-        self._multi_record_current()
+        # Timer + counter
+        timer_frame = ctk.CTkFrame(center, fg_color="transparent")
+        timer_frame.pack(pady=(16, 0))
 
-    def _multi_record_current(self):
-        """Start recording the current take."""
-        idx = self._multi_current
-        total = self._multi_total
-        self._log(f"Recording {idx} of {total} -- press ESC to stop.")
-        self._multi_status.configure(
-            text=f"Recording {idx} of {total}", fg=C["red"],
+        self._rec_timer_label = ctk.CTkLabel(
+            timer_frame, text="", font=ctk.CTkFont(family="Consolas", size=32, weight="bold"),
+            text_color=TEXT,
         )
+        self._rec_timer_label.pack()
 
-        output = self.output_var.get()
-        self.recorder = Recorder(
-            output_dir=output,
-            enable_video=self._video_var.get(),
-            enable_ocr=self._ocr_var.get(),
+        self._rec_steps_label = ctk.CTkLabel(
+            timer_frame, text="", font=ctk.CTkFont(size=14), text_color=MUTED,
         )
-        self.recording = True
-        self.record_btn.set_text("Stop Recording")
-        self.record_btn.set_color(C["red"], C["red_glow"])
-        self.record_btn._icon = "\u23f9"
-        self._rec_status.configure(text=f"Multi {idx}/{total}", fg=C["red"])
-        self._rec_dot.start()
+        self._rec_steps_label.pack()
 
-        def _record():
-            self.recorder.start()
-            self.root.after(0, self._multi_on_recording_stopped)
+        # Output dir
+        dir_frame = ctk.CTkFrame(page, fg_color="transparent")
+        dir_frame.pack(side="bottom", pady=20)
+        ctk.CTkLabel(dir_frame, text="Salvar em:", text_color=MUTED,
+                     font=ctk.CTkFont(size=11)).pack(side="left")
+        self._output_var = ctk.StringVar(value="recordings")
+        ctk.CTkEntry(dir_frame, textvariable=self._output_var, width=200,
+                     font=ctk.CTkFont(size=11)).pack(side="left", padx=6)
 
-        threading.Thread(target=_record, daemon=True).start()
-        self._start_timer()
+    def _toggle_recording(self):
+        if not self.recording:
+            self.recording = True
+            self._rec_btn.configure(text="PARAR", fg_color="#7f1d1d", hover_color="#991b1b")
+            self._rec_label.configure(text="Gravando... Faca seu workflow agora.\nPressione ESC ou clique PARAR para encerrar.")
 
-    def _multi_on_recording_stopped(self):
-        """Called when the current take finishes."""
+            output = self._output_var.get()
+            self.recorder = Recorder(output_dir=output)
+
+            def _run():
+                self.recorder.start()
+                self.after(0, self._on_recording_done)
+
+            threading.Thread(target=_run, daemon=True).start()
+            self._timer_start = time.monotonic()
+            self._update_timer()
+        else:
+            if self.recorder:
+                self.recorder.stop()
+
+    def _update_timer(self):
+        if not self.recording:
+            return
+        elapsed = time.monotonic() - self._timer_start
+        m, s = divmod(int(elapsed), 60)
+        self._rec_timer_label.configure(text=f"{m:02d}:{s:02d}")
+
+        steps = 0
+        if self.recorder and self.recorder.session:
+            steps = self.recorder.session.step_count
+        self._rec_steps_label.configure(text=f"{steps} passos capturados")
+
+        self._timer_id = self.after(500, self._update_timer)
+
+    def _on_recording_done(self):
         self.recording = False
-        self.record_btn.set_text("Start Recording")
-        self.record_btn.set_color(C["accent"], C["accent_hover"])
-        self.record_btn._icon = "\u23fa"
-        self._rec_dot.stop()
-        self._stop_timer()
+        if self._timer_id:
+            self.after_cancel(self._timer_id)
 
-        idx = self._multi_current
-        total = self._multi_total
+        self._rec_btn.configure(text="GRAVAR", fg_color=RED, hover_color="#dc2626")
 
         if self.recorder and self.recorder.session:
-            session_path = self.recorder.session.path if hasattr(self.recorder.session, "path") else None
-            self._log(f"Recording {idx} of {total} saved ({self.recorder.session.step_count} steps)")
-            try:
-                self._multi_session.add_recording(self.recorder.session)
-            except Exception as e:
-                self._log(f"Warning: could not register recording: {e}")
-
-        if idx < total:
-            self._multi_status.configure(
-                text=f"Recording {idx} of {total} done -- click Next", fg=C["green"],
+            self._session_path = self.recorder.session.path
+            count = self.recorder.session.step_count
+            self._rec_label.configure(
+                text=f"Gravacao concluida! {count} passos capturados.\nVa para 'Revisar Passos' para configurar."
             )
-            self._rec_status.configure(text="Multi (paused)", fg=C["yellow"])
-            self._multi_next_btn._label.configure(state="normal", fg=C["white"])
+            self._nav_status.configure(text=f"{self.recorder.session.name}")
+            self._load_steps()
+            self._refresh_recent()
         else:
-            self._multi_status.configure(
-                text=f"All {total} recordings done -- click Finish & Analyze",
-                fg=C["green"],
-            )
-            self._rec_status.configure(text="Idle", fg=C["text_muted"])
-            self._multi_finish_btn._label.configure(state="normal", fg=C["white"])
+            self._rec_label.configure(text="Clique para comecar a gravar.")
+            self._rec_timer_label.configure(text="")
+            self._rec_steps_label.configure(text="")
 
-        self._refresh_sessions()
+    # ── REVIEW PAGE ───────────────────────────────────────────────────
 
-    def _multi_next(self):
-        """Advance to the next recording take."""
-        if not self._multi_recording_active:
+    def _build_review_page(self):
+        page = ctk.CTkFrame(self, fg_color=BG)
+        self._pages["review"] = page
+
+        # Header
+        header = ctk.CTkFrame(page, fg_color="transparent")
+        header.pack(fill="x", padx=24, pady=(20, 12))
+        ctk.CTkLabel(header, text="Revisar Passos",
+                     font=ctk.CTkFont(size=20, weight="bold"),
+                     text_color=TEXT).pack(side="left")
+
+        self._review_info = ctk.CTkLabel(header, text="", text_color=MUTED,
+                                          font=ctk.CTkFont(size=12))
+        self._review_info.pack(side="right")
+
+        # Help text
+        ctk.CTkLabel(page, text="Marque os campos que mudam a cada execucao como 'Variavel'. Adicione notas para o dev.",
+                     font=ctk.CTkFont(size=12), text_color=DIM,
+                     wraplength=700, anchor="w").pack(fill="x", padx=24, pady=(0, 8))
+
+        # Split: step list (left) + preview (right)
+        content = ctk.CTkFrame(page, fg_color="transparent")
+        content.pack(fill="both", expand=True, padx=24, pady=(0, 20))
+
+        # Step list (scrollable)
+        left = ctk.CTkFrame(content, fg_color="transparent")
+        left.pack(side="left", fill="both", expand=True, padx=(0, 12))
+
+        self._step_scroll = ctk.CTkScrollableFrame(left, fg_color=CARD, corner_radius=12)
+        self._step_scroll.pack(fill="both", expand=True)
+
+        # Preview panel
+        right = ctk.CTkFrame(content, fg_color=CARD, corner_radius=12, width=380)
+        right.pack(side="right", fill="y")
+        right.pack_propagate(False)
+
+        ctk.CTkLabel(right, text="Preview do Passo",
+                     font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color=TEXT).pack(padx=16, pady=(16, 8))
+
+        self._preview_image = ctk.CTkLabel(right, text="Selecione um passo", text_color=MUTED)
+        self._preview_image.pack(fill="both", expand=True, padx=8, pady=4)
+
+        self._preview_meta = ctk.CTkTextbox(right, height=100, font=ctk.CTkFont(family="Consolas", size=10),
+                                             fg_color="#0a0a1a", text_color=DIM, corner_radius=8)
+        self._preview_meta.pack(fill="x", padx=8, pady=(4, 8))
+
+    def _load_steps(self):
+        if not self._session_path:
             return
-        self._multi_current += 1
-        self._multi_next_btn._label.configure(state="disabled", fg=C["text_muted"])
-        self._multi_record_current()
 
-    def _multi_finish(self):
-        """Run diff and variable inference on all collected recordings."""
-        if not self._multi_recording_active or not self._multi_session:
+        summary_path = os.path.join(self._session_path, "session_summary.json")
+        if not os.path.exists(summary_path):
             return
 
-        self._log("Running diff analysis across recordings...")
-        self._multi_status.configure(text="Analyzing...", fg=C["yellow"])
-        self._multi_finish_btn._label.configure(state="disabled", fg=C["text_muted"])
+        with open(summary_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
 
-        def _analyze():
+        self._steps = data.get("steps", [])
+
+        # Init step vars for new steps
+        for s in self._steps:
+            num = s.get("step", 0)
+            if num not in self._step_vars:
+                self._step_vars[num] = {"is_variable": False, "var_name": "", "note": ""}
+
+    def _load_review(self):
+        # Clear existing
+        for w in self._step_scroll.winfo_children():
+            w.destroy()
+
+        if not self._steps:
+            ctk.CTkLabel(self._step_scroll, text="Nenhum passo. Grave primeiro.",
+                         text_color=MUTED).pack(pady=20)
+            return
+
+        self._review_info.configure(text=f"{len(self._steps)} passos | {os.path.basename(self._session_path)}")
+
+        for step in self._steps:
+            self._create_step_card(step)
+
+    def _create_step_card(self, step):
+        num = step.get("step", 0)
+        action = step.get("action", "")
+        desc = step.get("description", "")
+        sv = self._step_vars.get(num, {})
+
+        # Color by action
+        colors = {"click": RED, "drag": "#FF6600", "scroll": BLUE, "keypress": YELLOW}
+        badge_color = MUTED
+        for key, col in colors.items():
+            if key in action:
+                badge_color = col
+                break
+
+        card = ctk.CTkFrame(self._step_scroll, fg_color="#1e1e3a", corner_radius=10)
+        card.pack(fill="x", padx=8, pady=4)
+
+        # Top row: badge + description + preview button
+        top = ctk.CTkFrame(card, fg_color="transparent")
+        top.pack(fill="x", padx=12, pady=(10, 4))
+
+        ctk.CTkLabel(top, text=f" {num:03d} ", font=ctk.CTkFont(family="Consolas", size=11, weight="bold"),
+                     fg_color=badge_color, corner_radius=4, text_color="white",
+                     width=40).pack(side="left")
+
+        action_label = action.replace("_click", "").replace("left", "Clique").replace("right", "Clique dir.").replace("keypress", "Digitou").replace("scroll", "Rolou")
+        ctk.CTkLabel(top, text=f"  {action_label}", font=ctk.CTkFont(size=12, weight="bold"),
+                     text_color=badge_color).pack(side="left")
+
+        ctk.CTkButton(top, text="Ver", width=50, height=26, corner_radius=6,
+                      fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                      font=ctk.CTkFont(size=10),
+                      command=lambda n=num: self._preview_step(n)
+                      ).pack(side="right")
+
+        # Description
+        desc_short = desc[:70] + "..." if len(desc) > 70 else desc
+        ctk.CTkLabel(card, text=desc_short, font=ctk.CTkFont(size=11),
+                     text_color=DIM, anchor="w").pack(fill="x", padx=12, pady=(0, 4))
+
+        # Variable toggle + name
+        var_frame = ctk.CTkFrame(card, fg_color="transparent")
+        var_frame.pack(fill="x", padx=12, pady=(0, 4))
+
+        is_var = ctk.BooleanVar(value=sv.get("is_variable", False))
+        var_check = ctk.CTkCheckBox(
+            var_frame, text="Variavel (muda toda vez)",
+            variable=is_var, font=ctk.CTkFont(size=11),
+            checkbox_width=18, checkbox_height=18,
+            fg_color=ACCENT, hover_color=ACCENT_HOVER,
+            command=lambda n=num, v=is_var: self._toggle_variable(n, v.get()),
+        )
+        var_check.pack(side="left")
+
+        if sv.get("is_variable"):
+            name_entry = ctk.CTkEntry(var_frame, width=150, height=26,
+                                       placeholder_text="Nome da variavel",
+                                       font=ctk.CTkFont(size=10))
+            name_entry.pack(side="left", padx=(10, 0))
+            if sv.get("var_name"):
+                name_entry.insert(0, sv["var_name"])
+            name_entry.bind("<FocusOut>", lambda e, n=num, en=name_entry: self._set_var_name(n, en.get()))
+
+        # Note
+        note_frame = ctk.CTkFrame(card, fg_color="transparent")
+        note_frame.pack(fill="x", padx=12, pady=(0, 10))
+
+        note_entry = ctk.CTkEntry(note_frame, height=26,
+                                   placeholder_text="Nota para o dev (opcional)",
+                                   font=ctk.CTkFont(size=10))
+        note_entry.pack(fill="x")
+        if sv.get("note"):
+            note_entry.insert(0, sv["note"])
+        note_entry.bind("<FocusOut>", lambda e, n=num, en=note_entry: self._set_note(n, en.get()))
+
+    def _toggle_variable(self, step_num, is_var):
+        if step_num not in self._step_vars:
+            self._step_vars[step_num] = {}
+        self._step_vars[step_num]["is_variable"] = is_var
+        # Rebuild review to show/hide name entry
+        self._load_review()
+
+    def _set_var_name(self, step_num, name):
+        if step_num not in self._step_vars:
+            self._step_vars[step_num] = {}
+        self._step_vars[step_num]["var_name"] = name
+
+    def _set_note(self, step_num, note):
+        if step_num not in self._step_vars:
+            self._step_vars[step_num] = {}
+        self._step_vars[step_num]["note"] = note
+
+    def _preview_step(self, step_num):
+        if not self._session_path:
+            return
+
+        meta_path = os.path.join(self._session_path, f"{step_num:03d}_metadata.json")
+        if not os.path.exists(meta_path):
+            return
+
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+
+        # Show screenshot
+        screenshot_name = meta.get("screenshot", "")
+        screenshot_path = os.path.join(self._session_path, screenshot_name)
+
+        if os.path.exists(screenshot_path):
             try:
-                diff = MultiRecordingDiff(self._multi_session)
-                result = diff.run()
-                self.root.after(0, lambda: self._multi_analysis_done(result))
-            except Exception as e:
-                self.root.after(0, lambda: self._multi_analysis_done(None, error=str(e)))
-
-        threading.Thread(target=_analyze, daemon=True).start()
-
-    def _multi_analysis_done(self, result, error=None):
-        """Callback when multi-recording analysis completes."""
-        self._multi_recording_active = False
-        self._multi_start_btn._label.configure(state="normal", fg=C["white"])
-
-        if error:
-            self._log(f"Multi-recording analysis error: {error}")
-            self._multi_status.configure(text=f"Error: {error}", fg=C["red"])
+                img = Image.open(screenshot_path)
+                img.thumbnail((360, 300), Image.Resampling.LANCZOS)
+                photo = ImageTk.PhotoImage(img)
+                self._preview_refs = [photo]
+                self._preview_image.configure(image=photo, text="")
+            except Exception:
+                self._preview_image.configure(image=None, text="Erro ao carregar imagem")
         else:
-            self._log("Multi-recording analysis complete. Enriched IR saved.")
-            self._multi_status.configure(text="Analysis complete", fg=C["green"])
-            self._refresh_sessions()
+            self._preview_image.configure(image=None, text="Screenshot nao encontrado")
+
+        # Show metadata
+        self._preview_meta.delete("0.0", "end")
+        display = {
+            "Acao": meta.get("action", ""),
+            "Janela": meta.get("window", {}).get("title", ""),
+            "Processo": meta.get("window", {}).get("process", ""),
+            "Elemento": meta.get("element", {}).get("name", ""),
+            "Tipo": meta.get("element", {}).get("control_type", ""),
+        }
+        if meta.get("position"):
+            display["Posicao"] = f"({meta['position'].get('x', '?')}, {meta['position'].get('y', '?')})"
+        if meta.get("text"):
+            display["Texto"] = meta["text"][:100]
+        if meta.get("ocr_nearby"):
+            display["OCR"] = meta["ocr_nearby"][:100]
+
+        for key, val in display.items():
+            if val:
+                self._preview_meta.insert("end", f"{key}: {val}\n")
+
+    # ── CONFIG PAGE ───────────────────────────────────────────────────
+
+    def _build_config_page(self):
+        page = ctk.CTkFrame(self, fg_color=BG)
+        self._pages["config"] = page
+
+        # Header
+        ctk.CTkLabel(page, text="Configurar Automacao",
+                     font=ctk.CTkFont(size=20, weight="bold"),
+                     text_color=TEXT).pack(anchor="w", padx=24, pady=(20, 12))
+
+        ctk.CTkLabel(page, text="Descreva o que a automacao deve fazer, cenarios especiais e excecoes.",
+                     font=ctk.CTkFont(size=12), text_color=DIM).pack(anchor="w", padx=24)
+
+        # Workflow name
+        name_card = ctk.CTkFrame(page, fg_color=CARD, corner_radius=12)
+        name_card.pack(fill="x", padx=24, pady=(16, 8))
+
+        ctk.CTkLabel(name_card, text="Nome do Workflow",
+                     font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color=TEXT).pack(anchor="w", padx=16, pady=(12, 4))
+        self._workflow_name = ctk.CTkEntry(name_card, placeholder_text="Ex: cadastro_processo_pje",
+                                            font=ctk.CTkFont(size=13), height=36)
+        self._workflow_name.pack(fill="x", padx=16, pady=(0, 12))
+
+        # Description
+        desc_card = ctk.CTkFrame(page, fg_color=CARD, corner_radius=12)
+        desc_card.pack(fill="x", padx=24, pady=8)
+
+        ctk.CTkLabel(desc_card, text="Descricao do Workflow",
+                     font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color=TEXT).pack(anchor="w", padx=16, pady=(12, 4))
+        ctk.CTkLabel(desc_card, text="O que esse workflow faz? Qual o objetivo final?",
+                     font=ctk.CTkFont(size=11), text_color=MUTED).pack(anchor="w", padx=16)
+        self._workflow_desc = ctk.CTkTextbox(desc_card, height=80,
+                                              font=ctk.CTkFont(size=12),
+                                              fg_color="#0a0a1a", corner_radius=8)
+        self._workflow_desc.pack(fill="x", padx=16, pady=(4, 12))
+
+        # Scenarios
+        scenario_card = ctk.CTkFrame(page, fg_color=CARD, corner_radius=12)
+        scenario_card.pack(fill="x", padx=24, pady=8)
+
+        ctk.CTkLabel(scenario_card, text="Cenarios e Excecoes",
+                     font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color=TEXT).pack(anchor="w", padx=16, pady=(12, 4))
+        ctk.CTkLabel(scenario_card, text="O que pode dar errado? Popups inesperados? Campos opcionais? Caminhos diferentes?",
+                     font=ctk.CTkFont(size=11), text_color=MUTED, wraplength=600).pack(anchor="w", padx=16)
+        self._scenarios = ctk.CTkTextbox(scenario_card, height=100,
+                                          font=ctk.CTkFont(size=12),
+                                          fg_color="#0a0a1a", corner_radius=8)
+        self._scenarios.pack(fill="x", padx=16, pady=(4, 12))
+
+        # Frequency
+        freq_card = ctk.CTkFrame(page, fg_color=CARD, corner_radius=12)
+        freq_card.pack(fill="x", padx=24, pady=8)
+
+        ctk.CTkLabel(freq_card, text="Frequencia de Execucao",
+                     font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color=TEXT).pack(anchor="w", padx=16, pady=(12, 4))
+        self._frequency = ctk.CTkComboBox(freq_card, values=[
+            "Sob demanda (manual)",
+            "Diariamente",
+            "Semanalmente",
+            "Varias vezes ao dia",
+            "Outro (descrever nos cenarios)",
+        ], font=ctk.CTkFont(size=12), width=300)
+        self._frequency.pack(anchor="w", padx=16, pady=(0, 12))
+
+        # Priority
+        prio_card = ctk.CTkFrame(page, fg_color=CARD, corner_radius=12)
+        prio_card.pack(fill="x", padx=24, pady=(8, 20))
+
+        ctk.CTkLabel(prio_card, text="Prioridade",
+                     font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color=TEXT).pack(anchor="w", padx=16, pady=(12, 4))
+        self._priority = ctk.CTkComboBox(prio_card, values=[
+            "Baixa — quando puder",
+            "Media — essa semana",
+            "Alta — urgente",
+        ], font=ctk.CTkFont(size=12), width=300)
+        self._priority.pack(anchor="w", padx=16, pady=(0, 12))
+
+    # ── SEND PAGE ─────────────────────────────────────────────────────
+
+    def _build_send_page(self):
+        page = ctk.CTkFrame(self, fg_color=BG)
+        self._pages["send"] = page
+
+        ctk.CTkLabel(page, text="Enviar pro Dev",
+                     font=ctk.CTkFont(size=20, weight="bold"),
+                     text_color=TEXT).pack(anchor="w", padx=24, pady=(20, 12))
+
+        # Summary
+        summary_card = ctk.CTkFrame(page, fg_color=CARD, corner_radius=12)
+        summary_card.pack(fill="x", padx=24, pady=8)
+
+        ctk.CTkLabel(summary_card, text="Resumo do Pacote",
+                     font=ctk.CTkFont(size=14, weight="bold"),
+                     text_color=TEXT).pack(anchor="w", padx=16, pady=(16, 8))
+
+        self._send_summary = ctk.CTkLabel(summary_card, text="Carregando...",
+                                           font=ctk.CTkFont(size=12),
+                                           text_color=DIM, justify="left", anchor="w")
+        self._send_summary.pack(fill="x", padx=16, pady=(0, 16))
+
+        # Variables summary
+        var_card = ctk.CTkFrame(page, fg_color=CARD, corner_radius=12)
+        var_card.pack(fill="x", padx=24, pady=8)
+
+        ctk.CTkLabel(var_card, text="Variaveis Marcadas",
+                     font=ctk.CTkFont(size=14, weight="bold"),
+                     text_color=TEXT).pack(anchor="w", padx=16, pady=(16, 8))
+
+        self._var_summary = ctk.CTkLabel(var_card, text="Nenhuma",
+                                          font=ctk.CTkFont(size=12),
+                                          text_color=DIM, justify="left", anchor="w")
+        self._var_summary.pack(fill="x", padx=16, pady=(0, 16))
+
+        # Buttons
+        btn_frame = ctk.CTkFrame(page, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=24, pady=20)
+
+        ctk.CTkButton(btn_frame, text="Salvar Pacote (.zip)",
+                      font=ctk.CTkFont(size=14, weight="bold"), height=46,
+                      fg_color=GREEN, hover_color="#16a34a", corner_radius=10,
+                      command=self._export_package).pack(side="left", padx=(0, 12))
+
+        ctk.CTkButton(btn_frame, text="Copiar Pasta",
+                      font=ctk.CTkFont(size=14), height=46,
+                      fg_color=BLUE, hover_color="#2563eb", corner_radius=10,
+                      command=self._copy_folder).pack(side="left", padx=(0, 12))
+
+        # Output log
+        log_card = ctk.CTkFrame(page, fg_color=CARD, corner_radius=12)
+        log_card.pack(fill="both", expand=True, padx=24, pady=(0, 20))
+
+        ctk.CTkLabel(log_card, text="Log", font=ctk.CTkFont(size=12, weight="bold"),
+                     text_color=TEXT).pack(anchor="w", padx=16, pady=(12, 4))
+        self._send_log = ctk.CTkTextbox(log_card, font=ctk.CTkFont(family="Consolas", size=10),
+                                         fg_color="#0a0a1a", corner_radius=8)
+        self._send_log.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+
+    def _update_send_summary(self):
+        if not self._session_path:
+            self._send_summary.configure(text="Nenhuma gravacao selecionada. Grave primeiro.")
+            self._var_summary.configure(text="—")
+            return
+
+        name = self._workflow_name.get() or os.path.basename(self._session_path)
+        desc = self._workflow_desc.get("0.0", "end").strip()
+        scenarios = self._scenarios.get("0.0", "end").strip()
+        freq = self._frequency.get()
+        prio = self._priority.get()
+
+        vars_marked = [
+            (num, sv) for num, sv in self._step_vars.items()
+            if sv.get("is_variable")
+        ]
+
+        summary = f"Workflow: {name}\n"
+        summary += f"Passos: {len(self._steps)}\n"
+        summary += f"Variaveis: {len(vars_marked)}\n"
+        summary += f"Frequencia: {freq}\n"
+        summary += f"Prioridade: {prio}\n"
+        if desc:
+            summary += f"Descricao: {desc[:100]}{'...' if len(desc) > 100 else ''}\n"
+        if scenarios:
+            summary += f"Cenarios: {scenarios[:100]}{'...' if len(scenarios) > 100 else ''}"
+
+        self._send_summary.configure(text=summary)
+
+        if vars_marked:
+            var_text = ""
+            for num, sv in sorted(vars_marked):
+                vname = sv.get("var_name", f"variavel_{num}")
+                var_text += f"  Passo {num:03d}: ${vname}\n"
+            self._var_summary.configure(text=var_text.strip())
+        else:
+            self._var_summary.configure(text="Nenhuma variavel marcada. Volte em 'Revisar Passos' para marcar.")
+
+    def _export_package(self):
+        if not self._session_path:
+            messagebox.showwarning("Aviso", "Nenhuma gravacao para exportar.")
+            return
+
+        dest = filedialog.asksaveasfilename(
+            defaultextension=".zip",
+            filetypes=[("ZIP", "*.zip")],
+            initialfile=f"actionshot_{os.path.basename(self._session_path)}.zip",
+        )
+        if not dest:
+            return
+
+        self._send_log.delete("0.0", "end")
+        self._log_send("Empacotando...")
+
+        try:
+            self._save_user_config()
+            self._log_send("Configuracoes salvas.")
+
+            # Curate if available
+            if PatternDetector:
+                try:
+                    detector = PatternDetector(self._session_path)
+                    detector.curate_session()
+                    self._log_send("Sessao curada (pre-processamento aplicado).")
+                except Exception as e:
+                    self._log_send(f"Curacaoo ignorada: {e}")
+
+            # Compile IR if available
+            if IRCompiler:
+                try:
+                    compiler = IRCompiler(self._session_path)
+                    compiler.compile_and_save()
+                    self._log_send("IR compilada.")
+                except Exception as e:
+                    self._log_send(f"IR ignorada: {e}")
+
+            # Create zip
+            base = os.path.splitext(dest)[0]
+            shutil.make_archive(base, "zip", self._session_path)
+            self._log_send(f"Pacote salvo: {dest}")
+            self._log_send("Pronto! Envie o .zip para o desenvolvedor.")
+
+            messagebox.showinfo("Sucesso", f"Pacote salvo em:\n{dest}")
+
+        except Exception as e:
+            self._log_send(f"Erro: {e}")
+            messagebox.showerror("Erro", str(e))
+
+    def _copy_folder(self):
+        if not self._session_path:
+            messagebox.showwarning("Aviso", "Nenhuma gravacao.")
+            return
+
+        dest = filedialog.askdirectory(title="Escolha onde copiar a pasta")
+        if not dest:
+            return
+
+        try:
+            self._save_user_config()
+            target = os.path.join(dest, os.path.basename(self._session_path))
+            shutil.copytree(self._session_path, target)
+            self._log_send(f"Copiado para: {target}")
+            messagebox.showinfo("Sucesso", f"Pasta copiada para:\n{target}")
+        except Exception as e:
+            self._log_send(f"Erro: {e}")
+
+    def _save_user_config(self):
+        """Save user annotations (variables, notes, config) into the session folder."""
+        config = {
+            "workflow_name": self._workflow_name.get(),
+            "description": self._workflow_desc.get("0.0", "end").strip(),
+            "scenarios": self._scenarios.get("0.0", "end").strip(),
+            "frequency": self._frequency.get(),
+            "priority": self._priority.get(),
+            "variables": {},
+            "step_notes": {},
+        }
+
+        for num, sv in self._step_vars.items():
+            if sv.get("is_variable"):
+                config["variables"][str(num)] = sv.get("var_name", f"variavel_{num}")
+            if sv.get("note"):
+                config["step_notes"][str(num)] = sv["note"]
+
+        path = os.path.join(self._session_path, "user_config.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+
+    def _log_send(self, msg):
+        ts = time.strftime("%H:%M:%S")
+        self._send_log.insert("end", f"[{ts}] {msg}\n")
+        self._send_log.see("end")
+
+
+# ── Entry point ───────────────────────────────────────────────────────
+
+class ActionShotGUI:
+    """Compatibility wrapper for existing main.py calls."""
+    def __init__(self):
+        self._app = ActionShotApp()
 
     def run(self):
-        self.root.mainloop()
+        self._app.mainloop()
