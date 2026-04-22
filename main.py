@@ -2,6 +2,7 @@
 
 import argparse
 import sys
+import webbrowser
 
 
 BANNER = """
@@ -11,6 +12,65 @@ BANNER = """
     ║   for AI-Powered Automation           ║
     ╚═══════════════════════════════════════╝
 """
+
+
+WEB_BANNER = """
+    ╔═══════════════════════════════════════╗
+    ║       ActionShot Web Dashboard        ║
+    ╠═══════════════════════════════════════╣
+    ║                                       ║
+    ║   URL: {url:<30s}║
+    ║                                       ║
+    ║   Press Ctrl+C to stop the server.    ║
+    ╚═══════════════════════════════════════╝
+"""
+
+
+def cmd_web(args):
+    from actionshot.web_dashboard import create_app
+
+    host = getattr(args, "host", "0.0.0.0")
+    port = getattr(args, "port", 5000)
+    no_browser = getattr(args, "no_browser", False)
+
+    app = create_app()
+
+    if not no_browser:
+        # Open browser after a short delay so Flask can start
+        import threading
+
+        def _open():
+            import time
+            time.sleep(1.2)
+            webbrowser.open(f"http://127.0.0.1:{port}")
+
+        threading.Thread(target=_open, daemon=True).start()
+
+    app.run(host=host, port=port, debug=False)
+
+
+def cmd_dashboard(args):
+    url = f"http://{getattr(args, 'host', '0.0.0.0')}:{getattr(args, 'port', 5000)}"
+    print(WEB_BANNER.format(url=url))
+    cmd_web(args)
+
+
+def cmd_status(args):
+    from actionshot.terminal_ui import TerminalDashboard
+    dash = TerminalDashboard(recordings_dir=getattr(args, "recordings", "recordings"))
+    dash.show_status()
+
+
+def cmd_show(args):
+    from actionshot.terminal_ui import TerminalDashboard
+    dash = TerminalDashboard()
+    dash.show_session(args.session)
+
+
+def cmd_metrics(args):
+    from actionshot.terminal_ui import TerminalDashboard
+    dash = TerminalDashboard()
+    dash.show_metrics(workflow_id=getattr(args, "workflow", None))
 
 
 def cmd_record(args):
@@ -385,6 +445,35 @@ def main():
 
     # gui
     sub.add_parser("gui", help="Launch graphical interface").set_defaults(func=cmd_gui)
+
+    # web
+    wb = sub.add_parser("web", help="Start the Flask web dashboard")
+    wb.add_argument("--port", type=int, default=5000, help="Server port (default: 5000)")
+    wb.add_argument("--host", default="0.0.0.0", help="Server host (default: 0.0.0.0)")
+    wb.add_argument("--no-browser", action="store_true", help="Don't auto-open a browser")
+    wb.set_defaults(func=cmd_web)
+
+    # dashboard (alias for web with banner)
+    db = sub.add_parser("dashboard", help="Start web dashboard with a status banner")
+    db.add_argument("--port", type=int, default=5000, help="Server port (default: 5000)")
+    db.add_argument("--host", default="0.0.0.0", help="Server host (default: 0.0.0.0)")
+    db.add_argument("--no-browser", action="store_true", help="Don't auto-open a browser")
+    db.set_defaults(func=cmd_dashboard)
+
+    # status
+    st = sub.add_parser("status", help="Show system status in terminal")
+    st.add_argument("--recordings", default="recordings", help="Recordings directory")
+    st.set_defaults(func=cmd_status)
+
+    # show
+    sh = sub.add_parser("show", help="Pretty-print session details in terminal")
+    sh.add_argument("session", help="Path to session folder")
+    sh.set_defaults(func=cmd_show)
+
+    # metrics
+    me = sub.add_parser("metrics", help="Show telemetry metrics in terminal")
+    me.add_argument("workflow", nargs="?", default=None, help="Workflow ID (omit for all)")
+    me.set_defaults(func=cmd_metrics)
 
     # multi-record
     mr = sub.add_parser("multi-record", help="Interactive multi-recording session")
