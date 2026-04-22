@@ -1,0 +1,125 @@
+{
+  "workflow_id": "popup_interruption",
+  "description": "Normal workflow filling a cadastro form, interrupted by an unexpected Windows Update popup and a cookie consent banner. Must dismiss both and continue.",
+  "inputs": [
+    {"name": "nome_cliente", "type": "string", "example": "Ana Beatriz Costa Ferreira"},
+    {"name": "email_cliente", "type": "string", "example": "ana.ferreira@gmail.com"}
+  ],
+  "outputs": [
+    {"name": "result", "type": "string"}
+  ],
+  "steps": [
+    {
+      "id": 1,
+      "op": "open_app",
+      "target": "Cadastro de Partes - Google Chrome"
+    },
+    {
+      "id": 2,
+      "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtNome"},
+        "secondary": {"method": "css_selector", "value": "input#nome-parte"},
+        "tertiary": {"method": "ocr_anchor", "text": "Nome da Parte"},
+        "fallback": {"method": "coordinates", "x": 450, "y": 220},
+        "label": "Nome da Parte",
+        "control_type": "Edit"
+      },
+      "value": "$nome_cliente"
+    },
+    {
+      "id": 3,
+      "op": "dismiss_popup",
+      "description": "Unexpected Windows Update notification may appear",
+      "popup_patterns": [
+        {"window_title": "Windows Update", "button_text": "Lembrar mais tarde"},
+        {"window_title": "Atualizar e Reiniciar", "button_text": "Agora nao"},
+        {"window_class": "Windows.UI.Core.CoreWindow", "button_text": "Fechar"}
+      ],
+      "selector": {
+        "primary": {"method": "uia_name", "value": "Lembrar mais tarde"},
+        "secondary": {"method": "uia_name", "value": "Agora nao"},
+        "tertiary": {"method": "ocr_anchor", "text": "Lembrar mais tarde"},
+        "fallback": {"method": "coordinates", "x": 780, "y": 620},
+        "label": "Dismiss Windows Update popup",
+        "control_type": "Button"
+      },
+      "timeout_ms": 3000,
+      "optional": true
+    },
+    {
+      "id": 4,
+      "op": "dismiss_popup",
+      "description": "Cookie consent banner may overlay the form",
+      "popup_patterns": [
+        {"css_selector": "div.cookie-banner button.accept", "button_text": "Aceitar"},
+        {"css_selector": "div#lgpd-consent button", "button_text": "Aceitar Cookies"}
+      ],
+      "selector": {
+        "primary": {"method": "css_selector", "value": "div.cookie-banner button.accept"},
+        "secondary": {"method": "uia_automation_id", "value": "btnAceitarCookies"},
+        "tertiary": {"method": "ocr_anchor", "text": "Aceitar Cookies"},
+        "fallback": {"method": "coordinates", "x": 640, "y": 700},
+        "label": "Aceitar Cookies (LGPD)",
+        "control_type": "Button"
+      },
+      "timeout_ms": 3000,
+      "optional": true
+    },
+    {
+      "id": 5,
+      "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtEmail"},
+        "secondary": {"method": "css_selector", "value": "input#email-parte"},
+        "tertiary": {"method": "ocr_anchor", "text": "Email"},
+        "fallback": {"method": "coordinates", "x": 450, "y": 290},
+        "label": "Email",
+        "control_type": "Edit"
+      },
+      "value": "$email_cliente"
+    },
+    {
+      "id": 6,
+      "op": "click",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "btnSalvar"},
+        "secondary": {"method": "css_selector", "value": "button#salvar-parte"},
+        "tertiary": {"method": "ocr_anchor", "text": "Salvar"},
+        "fallback": {"method": "coordinates", "x": 450, "y": 380},
+        "label": "Salvar",
+        "control_type": "Button"
+      }
+    },
+    {
+      "id": 7,
+      "op": "dismiss_popup",
+      "description": "Possible JavaScript alert confirming save",
+      "popup_patterns": [
+        {"window_class": "Alert", "button_text": "OK"}
+      ],
+      "selector": {
+        "primary": {"method": "uia_name", "value": "OK"},
+        "tertiary": {"method": "ocr_anchor", "text": "OK"},
+        "fallback": {"method": "coordinates", "x": 640, "y": 400},
+        "label": "Dismiss JS alert",
+        "control_type": "Button"
+      },
+      "timeout_ms": 5000,
+      "optional": true
+    },
+    {
+      "id": 8,
+      "op": "wait_for",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "lblCadastroSucesso"},
+        "secondary": {"method": "css_selector", "value": "div.alert-success"},
+        "tertiary": {"method": "ocr_anchor", "text": "Cadastro realizado com sucesso"},
+        "label": "Success confirmation",
+        "control_type": "Text"
+      },
+      "timeout_ms": 10000
+    }
+  ],
+  "assertions": []
+}

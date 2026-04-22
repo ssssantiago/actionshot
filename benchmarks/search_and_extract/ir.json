@@ -1,0 +1,130 @@
+{
+  "workflow_id": "search_and_extract",
+  "description": "Navigate to TJSP jurisprudence search, type query, execute search, and extract case results.",
+  "inputs": [
+    {"name": "termo_busca", "type": "string", "example": "dano moral acidente de transito"},
+    {"name": "comarca", "type": "string", "example": "Sao Paulo"}
+  ],
+  "outputs": [
+    {"name": "numero_processo", "type": "string"},
+    {"name": "ementa", "type": "string"}
+  ],
+  "steps": [
+    {
+      "id": 1,
+      "op": "open_app",
+      "target": "TJSP - Consulta de Jurisprudencia - Google Chrome"
+    },
+    {
+      "id": 2,
+      "op": "click",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "lnkJurisprudencia"},
+        "secondary": {"method": "css_selector", "value": "a#nav-jurisprudencia"},
+        "tertiary": {"method": "ocr_anchor", "text": "Jurisprudencia"},
+        "fallback": {"method": "coordinates", "x": 350, "y": 65},
+        "label": "Jurisprudencia",
+        "control_type": "Hyperlink"
+      }
+    },
+    {
+      "id": 3,
+      "op": "wait_for",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtPesquisaLivre"},
+        "secondary": {"method": "css_selector", "value": "input#pesquisa-livre"},
+        "label": "Campo de pesquisa",
+        "control_type": "Edit"
+      },
+      "timeout_ms": 8000
+    },
+    {
+      "id": 4,
+      "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtPesquisaLivre"},
+        "secondary": {"method": "css_selector", "value": "input#pesquisa-livre"},
+        "tertiary": {"method": "ocr_anchor", "text": "Pesquisa livre"},
+        "fallback": {"method": "coordinates", "x": 500, "y": 200},
+        "label": "Pesquisa livre",
+        "control_type": "Edit"
+      },
+      "value": "$termo_busca"
+    },
+    {
+      "id": 5,
+      "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtComarca"},
+        "secondary": {"method": "css_selector", "value": "input#comarca"},
+        "tertiary": {"method": "ocr_anchor", "text": "Comarca"},
+        "fallback": {"method": "coordinates", "x": 500, "y": 270},
+        "label": "Comarca",
+        "control_type": "Edit"
+      },
+      "value": "$comarca"
+    },
+    {
+      "id": 6,
+      "op": "click",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "btnPesquisar"},
+        "secondary": {"method": "css_selector", "value": "button#btn-pesquisar"},
+        "tertiary": {"method": "ocr_anchor", "text": "Pesquisar"},
+        "fallback": {"method": "coordinates", "x": 500, "y": 340},
+        "label": "Pesquisar",
+        "control_type": "Button"
+      }
+    },
+    {
+      "id": 7,
+      "op": "wait_for",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "gridResultados"},
+        "secondary": {"method": "css_selector", "value": "div#resultados-lista"},
+        "label": "Resultados grid",
+        "control_type": "DataGrid"
+      },
+      "timeout_ms": 15000
+    },
+    {
+      "id": 8,
+      "op": "click",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "resultado_0"},
+        "secondary": {"method": "css_selector", "value": "div.resultado-item:first-child a"},
+        "tertiary": {"method": "ocr_anchor", "text": "Apelacao"},
+        "fallback": {"method": "coordinates", "x": 500, "y": 420},
+        "label": "Primeiro resultado",
+        "control_type": "Hyperlink"
+      }
+    },
+    {
+      "id": 9,
+      "op": "extract_text",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "lblNumeroProcesso"},
+        "secondary": {"method": "css_selector", "value": "span.numero-processo"},
+        "tertiary": {"method": "ocr_anchor", "text": "Processo:"},
+        "fallback": {"method": "coordinates", "x": 400, "y": 180},
+        "label": "Numero do Processo",
+        "control_type": "Text"
+      },
+      "store_as": "numero_processo"
+    },
+    {
+      "id": 10,
+      "op": "extract_text",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "lblEmenta"},
+        "secondary": {"method": "css_selector", "value": "div.ementa-text"},
+        "tertiary": {"method": "ocr_anchor", "text": "Ementa"},
+        "fallback": {"method": "coordinates", "x": 400, "y": 320},
+        "label": "Ementa",
+        "control_type": "Text"
+      },
+      "store_as": "ementa"
+    }
+  ],
+  "assertions": []
+}

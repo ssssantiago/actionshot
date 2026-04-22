@@ -1,0 +1,9 @@
+{
+  "name": "conditional_approval",
+  "difficulty": "hard",
+  "app_type": "Sistema de Honorarios - Google Chrome",
+  "has_branches": true,
+  "has_loops": false,
+  "step_count": 12,
+  "description": "Check honorarios amount, route to socio-gerente (>R$5000) or socio-junior with if_condition."
+}

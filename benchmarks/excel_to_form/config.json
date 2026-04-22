@@ -1,0 +1,9 @@
+{
+  "name": "excel_to_form",
+  "difficulty": "medium",
+  "app_type": "Microsoft Excel / Google Chrome",
+  "has_branches": false,
+  "has_loops": false,
+  "step_count": 10,
+  "description": "Read Excel cell data (nome, CPF, telefone), switch to web form, fill 3 fields, submit."
+}

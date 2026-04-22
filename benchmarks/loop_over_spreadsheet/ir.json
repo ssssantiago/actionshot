@@ -1,0 +1,166 @@
+{
+  "workflow_id": "loop_over_spreadsheet",
+  "description": "Iterate over rows in an Excel spreadsheet, filling a web form for each client row, then submit and move to the next.",
+  "inputs": [
+    {"name": "planilha_path", "type": "string", "example": "C:\\Processos\\clientes_pendentes.xlsx"},
+    {"name": "total_linhas", "type": "string", "example": "10"}
+  ],
+  "outputs": [
+    {"name": "registros_processados", "type": "string"}
+  ],
+  "steps": [
+    {
+      "id": 1,
+      "op": "open_app",
+      "target": "clientes_pendentes.xlsx - Microsoft Excel"
+    },
+    {
+      "id": 2,
+      "op": "click",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "A1"},
+        "tertiary": {"method": "ocr_anchor", "text": "Nome"},
+        "fallback": {"method": "coordinates", "x": 85, "y": 125},
+        "label": "Header row cell A1",
+        "control_type": "DataItem"
+      }
+    },
+    {
+      "id": 3,
+      "op": "loop",
+      "iterations": 10,
+      "iterator_var": "row_idx",
+      "description": "Process each client row from the spreadsheet",
+      "body": [
+        {
+          "id": 4,
+          "op": "extract_text",
+          "selector": {
+            "primary": {"method": "uia_automation_id", "value": "A{row_idx+2}"},
+            "tertiary": {"method": "ocr_anchor", "text": "Nome"},
+            "fallback": {"method": "coordinates", "x": 85, "y_offset_per_row": 20},
+            "label": "Nome do cliente (row)",
+            "control_type": "DataItem"
+          },
+          "store_as": "nome_atual"
+        },
+        {
+          "id": 5,
+          "op": "extract_text",
+          "selector": {
+            "primary": {"method": "uia_automation_id", "value": "B{row_idx+2}"},
+            "tertiary": {"method": "ocr_anchor", "text": "CPF"},
+            "fallback": {"method": "coordinates", "x": 200, "y_offset_per_row": 20},
+            "label": "CPF do cliente (row)",
+            "control_type": "DataItem"
+          },
+          "store_as": "cpf_atual"
+        },
+        {
+          "id": 6,
+          "op": "extract_text",
+          "selector": {
+            "primary": {"method": "uia_automation_id", "value": "C{row_idx+2}"},
+            "tertiary": {"method": "ocr_anchor", "text": "Numero OAB"},
+            "fallback": {"method": "coordinates", "x": 320, "y_offset_per_row": 20},
+            "label": "OAB do advogado (row)",
+            "control_type": "DataItem"
+          },
+          "store_as": "oab_atual"
+        },
+        {
+          "id": 7,
+          "op": "open_app",
+          "target": "Cadastro Processual - Google Chrome"
+        },
+        {
+          "id": 8,
+          "op": "fill_field",
+          "selector": {
+            "primary": {"method": "uia_automation_id", "value": "txtNomeCliente"},
+            "secondary": {"method": "css_selector", "value": "input#nome-cliente"},
+            "tertiary": {"method": "ocr_anchor", "text": "Nome do Cliente"},
+            "fallback": {"method": "coordinates", "x": 450, "y": 220},
+            "label": "Nome do Cliente",
+            "control_type": "Edit"
+          },
+          "value": "$nome_atual"
+        },
+        {
+          "id": 9,
+          "op": "fill_field",
+          "selector": {
+            "primary": {"method": "uia_automation_id", "value": "txtCPFCliente"},
+            "secondary": {"method": "css_selector", "value": "input#cpf-cliente"},
+            "tertiary": {"method": "ocr_anchor", "text": "CPF"},
+            "fallback": {"method": "coordinates", "x": 450, "y": 290},
+            "label": "CPF",
+            "control_type": "Edit"
+          },
+          "value": "$cpf_atual"
+        },
+        {
+          "id": 10,
+          "op": "fill_field",
+          "selector": {
+            "primary": {"method": "uia_automation_id", "value": "txtOAB"},
+            "secondary": {"method": "css_selector", "value": "input#oab-advogado"},
+            "tertiary": {"method": "ocr_anchor", "text": "OAB"},
+            "fallback": {"method": "coordinates", "x": 450, "y": 360},
+            "label": "Numero OAB",
+            "control_type": "Edit"
+          },
+          "value": "$oab_atual"
+        },
+        {
+          "id": 11,
+          "op": "click",
+          "selector": {
+            "primary": {"method": "uia_automation_id", "value": "btnSalvar"},
+            "secondary": {"method": "css_selector", "value": "button#btn-salvar"},
+            "tertiary": {"method": "ocr_anchor", "text": "Salvar"},
+            "fallback": {"method": "coordinates", "x": 450, "y": 440},
+            "label": "Salvar",
+            "control_type": "Button"
+          }
+        },
+        {
+          "id": 12,
+          "op": "wait_for",
+          "selector": {
+            "primary": {"method": "uia_automation_id", "value": "lblSucesso"},
+            "secondary": {"method": "css_selector", "value": "div.alert-success"},
+            "tertiary": {"method": "ocr_anchor", "text": "Registro salvo"},
+            "label": "Confirmacao de sucesso",
+            "control_type": "Text"
+          },
+          "timeout_ms": 10000
+        },
+        {
+          "id": 13,
+          "op": "click",
+          "selector": {
+            "primary": {"method": "uia_automation_id", "value": "btnNovoCadastro"},
+            "secondary": {"method": "css_selector", "value": "button#btn-novo"},
+            "tertiary": {"method": "ocr_anchor", "text": "Novo Cadastro"},
+            "fallback": {"method": "coordinates", "x": 300, "y": 440},
+            "label": "Novo Cadastro",
+            "control_type": "Button"
+          }
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "op": "open_app",
+      "target": "clientes_pendentes.xlsx - Microsoft Excel"
+    },
+    {
+      "id": 15,
+      "op": "keyboard_shortcut",
+      "keys": "ctrl+s",
+      "description": "Save spreadsheet with processed status"
+    }
+  ],
+  "assertions": []
+}

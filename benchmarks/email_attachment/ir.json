@@ -1,0 +1,105 @@
+{
+  "workflow_id": "email_attachment",
+  "description": "Open Outlook, compose a new email with recipient, subject, attach a PDF file, and send.",
+  "inputs": [
+    {"name": "destinatario", "type": "string", "example": "cliente@escritorio.com.br"},
+    {"name": "assunto", "type": "string", "example": "Peticao Inicial - Processo 0001234-56.2024.8.26.0100"},
+    {"name": "anexo_path", "type": "string", "example": "C:\\Processos\\peticao_inicial.pdf"}
+  ],
+  "outputs": [
+    {"name": "result", "type": "string"}
+  ],
+  "steps": [
+    {
+      "id": 1,
+      "op": "open_app",
+      "target": "Microsoft Outlook"
+    },
+    {
+      "id": 2,
+      "op": "click",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "btnNovoEmail"},
+        "secondary": {"method": "uia_name", "value": "Novo Email"},
+        "tertiary": {"method": "ocr_anchor", "text": "Novo Email"},
+        "fallback": {"method": "coordinates", "x": 75, "y": 48},
+        "label": "Novo Email",
+        "control_type": "Button"
+      }
+    },
+    {
+      "id": 3,
+      "op": "wait_for",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtPara"},
+        "label": "Para field",
+        "control_type": "Edit"
+      },
+      "timeout_ms": 5000
+    },
+    {
+      "id": 4,
+      "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtPara"},
+        "secondary": {"method": "uia_name", "value": "Para"},
+        "tertiary": {"method": "ocr_anchor", "text": "Para..."},
+        "fallback": {"method": "coordinates", "x": 450, "y": 120},
+        "label": "Para",
+        "control_type": "Edit"
+      },
+      "value": "$destinatario"
+    },
+    {
+      "id": 5,
+      "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtAssunto"},
+        "secondary": {"method": "uia_name", "value": "Assunto"},
+        "tertiary": {"method": "ocr_anchor", "text": "Assunto"},
+        "fallback": {"method": "coordinates", "x": 450, "y": 160},
+        "label": "Assunto",
+        "control_type": "Edit"
+      },
+      "value": "$assunto"
+    },
+    {
+      "id": 6,
+      "op": "click",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "btnAnexarArquivo"},
+        "secondary": {"method": "uia_name", "value": "Anexar Arquivo"},
+        "tertiary": {"method": "ocr_anchor", "text": "Anexar Arquivo"},
+        "fallback": {"method": "coordinates", "x": 120, "y": 85},
+        "label": "Anexar Arquivo",
+        "control_type": "Button"
+      }
+    },
+    {
+      "id": 7,
+      "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "FileNameControlHost"},
+        "secondary": {"method": "uia_name", "value": "Nome do arquivo:"},
+        "tertiary": {"method": "ocr_anchor", "text": "Nome do arquivo"},
+        "fallback": {"method": "coordinates", "x": 520, "y": 480},
+        "label": "Nome do arquivo",
+        "control_type": "Edit"
+      },
+      "value": "$anexo_path"
+    },
+    {
+      "id": 8,
+      "op": "click",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "btnEnviar"},
+        "secondary": {"method": "uia_name", "value": "Enviar"},
+        "tertiary": {"method": "ocr_anchor", "text": "Enviar"},
+        "fallback": {"method": "coordinates", "x": 75, "y": 48},
+        "label": "Enviar",
+        "control_type": "Button"
+      }
+    }
+  ],
+  "assertions": []
+}

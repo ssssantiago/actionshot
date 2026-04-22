@@ -1,0 +1,126 @@
+{
+  "workflow_id": "multi_tab_workflow",
+  "description": "Open 3 browser tabs (TJSP, TJRJ, STJ), search the same processo in each, and consolidate results.",
+  "inputs": [
+    {"name": "numero_processo", "type": "string", "example": "0001234-56.2024.8.26.0100"},
+    {"name": "nome_parte", "type": "string", "example": "Maria da Silva Santos"}
+  ],
+  "outputs": [
+    {"name": "resultado_tjsp", "type": "string"},
+    {"name": "resultado_tjrj", "type": "string"},
+    {"name": "resultado_stj", "type": "string"}
+  ],
+  "steps": [
+    {
+      "id": 1,
+      "op": "open_app",
+      "target": "Google Chrome"
+    },
+    {
+      "id": 2,
+      "op": "keyboard_shortcut",
+      "keys": "ctrl+t",
+      "description": "Open new tab for TJSP"
+    },
+    {
+      "id": 3,
+      "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "addressBar"},
+        "secondary": {"method": "uia_name", "value": "Barra de endereco"},
+        "tertiary": {"method": "ocr_anchor", "text": "Pesquisar ou digitar"},
+        "fallback": {"method": "coordinates", "x": 500, "y": 52},
+        "label": "Barra de endereco",
+        "control_type": "Edit"
+      },
+      "value": "https://esaj.tjsp.jus.br/cpopg/open.do"
+    },
+    {
+      "id": 4,
+      "op": "keyboard_shortcut",
+      "keys": "enter"
+    },
+    {
+      "id": 5,
+      "op": "wait_for",
+      "selector": {
+        "primary": {"method": "css_selector", "value": "input#numeroDigitoAnoUnificado"},
+        "tertiary": {"method": "ocr_anchor", "text": "Numero do processo"},
+        "label": "Campo numero processo TJSP",
+        "control_type": "Edit"
+      },
+      "timeout_ms": 10000
+    },
+    {
+      "id": 6,
+      "op": "fill_field",
+      "selector": {
+        "primary": {"method": "css_selector", "value": "input#numeroDigitoAnoUnificado"},
+        "tertiary": {"method": "ocr_anchor", "text": "Numero do processo"},
+        "fallback": {"method": "coordinates", "x": 450, "y": 250},
+        "label": "Numero processo TJSP",
+        "control_type": "Edit"
+      },
+      "value": "$numero_processo"
+    },
+    {
+      "id": 7,
+      "op": "click",
+      "selector": {
+        "primary": {"method": "css_selector", "value": "input#botaoConsultarProcessos"},
+        "tertiary": {"method": "ocr_anchor", "text": "Consultar"},
+        "fallback": {"method": "coordinates", "x": 450, "y": 350},
+        "label": "Consultar TJSP",
+        "control_type": "Button"
+      }
+    },
+    {
+      "id": 8,
+      "op": "extract_text",
+      "selector": {
+        "primary": {"method": "css_selector", "value": "span#classeProcesso"},
+        "tertiary": {"method": "ocr_anchor", "text": "Classe:"},
+        "fallback": {"method": "coordinates", "x": 400, "y": 200},
+        "label": "Classe processo TJSP",
+        "control_type": "Text"
+      },
+      "store_as": "resultado_tjsp"
+    },
+    {
+      "id": 9,
+      "op": "keyboard_shortcut",
+      "keys": "ctrl+t",
+      "description": "Open new tab for TJRJ"
+    },
+    {
+      "id": 10,
+      "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "addressBar"},
+        "tertiary": {"method": "ocr_anchor", "text": "Pesquisar ou digitar"},
+        "fallback": {"method": "coordinates", "x": 500, "y": 52},
+        "label": "Barra de endereco",
+        "control_type": "Edit"
+      },
+      "value": "https://www3.tjrj.jus.br/consultaprocessual"
+    },
+    {
+      "id": 11,
+      "op": "keyboard_shortcut",
+      "keys": "enter"
+    },
+    {
+      "id": 12,
+      "op": "fill_field",
+      "selector": {
+        "primary": {"method": "css_selector", "value": "input#nomeParteAutora"},
+        "tertiary": {"method": "ocr_anchor", "text": "Nome da Parte"},
+        "fallback": {"method": "coordinates", "x": 450, "y": 280},
+        "label": "Nome Parte TJRJ",
+        "control_type": "Edit"
+      },
+      "value": "$nome_parte"
+    }
+  ],
+  "assertions": []
+}
