@@ -136,6 +136,76 @@ def cmd_gui(args):
     app.run()
 
 
+def cmd_multi_record(args):
+    from actionshot.recorder import Recorder
+    print(BANNER)
+
+    name = args.name
+    count = args.count
+    output = args.output
+
+    try:
+        from actionshot.multi_recorder import MultiRecordingSession, MultiRecordingDiff
+    except ImportError:
+        print("Error: multi_recorder module not available.")
+        sys.exit(1)
+
+    session = MultiRecordingSession(
+        workflow_name=name,
+        num_recordings=count,
+        output_dir=output,
+    )
+
+    for i in range(1, count + 1):
+        if i > 1:
+            input(f"\nPress Enter to start recording {i} of {count}...")
+        print(f"\n--- Recording {i} of {count}. Press ESC to stop this recording. ---\n")
+
+        recorder = Recorder(
+            output_dir=output,
+            enable_video=args.video,
+            enable_ocr=not args.no_ocr,
+        )
+        try:
+            recorder.start()
+        except KeyboardInterrupt:
+            recorder.stop()
+
+        if recorder.session:
+            print(f"Recording {i} saved: {recorder.session.name} ({recorder.session.step_count} steps)")
+            session.add_recording(recorder.session)
+        else:
+            print(f"Warning: recording {i} produced no session data.")
+
+    print("\n--- All recordings complete. Running diff + variable inference... ---\n")
+    diff = MultiRecordingDiff(session)
+    result = diff.run()
+    print(f"Analysis complete. Enriched IR saved.")
+
+
+def cmd_curate(args):
+    from actionshot.patterns import PatternDetector
+    print(BANNER)
+    detector = PatternDetector(args.session)
+    result = detector.curate_session()
+    print(f"Curation complete: {len(result.get('steps', []))} steps retained.")
+
+
+def cmd_compile(args):
+    from actionshot.ir_compiler import IRCompiler
+    print(BANNER)
+    compiler = IRCompiler(args.session)
+    output = compiler.compile_and_save(output_path=args.output)
+    print(f"IR compiled and saved to: {output}")
+
+
+def cmd_redact(args):
+    from actionshot.redact import redact_session
+    print(BANNER)
+    output = redact_session(args.session)
+    print(f"Redacted copy created at: {output}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="ActionShot - Record desktop interactions for AI-powered automation",
@@ -230,6 +300,31 @@ def main():
 
     # gui
     sub.add_parser("gui", help="Launch graphical interface").set_defaults(func=cmd_gui)
+
+    # multi-record
+    mr = sub.add_parser("multi-record", help="Interactive multi-recording session")
+    mr.add_argument("--name", required=True, help="Workflow name")
+    mr.add_argument("--count", type=int, default=3, help="Number of recordings (default: 3)")
+    mr.add_argument("-o", "--output", default="recordings", help="Output directory")
+    mr.add_argument("--video", action="store_true", help="Also record video (MP4)")
+    mr.add_argument("--no-ocr", action="store_true", help="Disable OCR text extraction")
+    mr.set_defaults(func=cmd_multi_record)
+
+    # curate
+    cu = sub.add_parser("curate", help="Run curation pipeline on a session")
+    cu.add_argument("session", help="Path to session folder")
+    cu.set_defaults(func=cmd_curate)
+
+    # compile
+    co = sub.add_parser("compile", help="Compile session to IR")
+    co.add_argument("session", help="Path to session folder")
+    co.add_argument("-o", "--output", default=None, help="Output IR path")
+    co.set_defaults(func=cmd_compile)
+
+    # redact
+    rd = sub.add_parser("redact", help="Create redacted copy of a session")
+    rd.add_argument("session", help="Path to session folder")
+    rd.set_defaults(func=cmd_redact)
 
     args = parser.parse_args()
     if not args.command:

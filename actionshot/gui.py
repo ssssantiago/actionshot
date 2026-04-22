@@ -14,6 +14,13 @@ from .replay import Replayer
 from .generator import ScriptGenerator
 from .ai_agent import AIAgent
 
+# Optional multi-recording support
+try:
+    from .multi_recorder import MultiRecordingSession, MultiRecordingDiff
+    HAS_MULTI_RECORDING = True
+except Exception:
+    HAS_MULTI_RECORDING = False
+
 
 # ── Color palette ─────────────────────────────────────────────────────
 
@@ -230,6 +237,12 @@ class ActionShotGUI:
         self._recording_start_time = None
         self._timer_id = None
 
+        # Multi-recording state
+        self._multi_session = None
+        self._multi_current = 0
+        self._multi_total = 0
+        self._multi_recording_active = False
+
         self._build_ui()
 
     def _build_ui(self):
@@ -350,6 +363,74 @@ class ActionShotGUI:
                              color=color, hover_color=hover,
                              command=cmd, width=145, height=38, font_size=10)
             btn.grid(row=0, column=i, padx=(0, 8))
+
+        # ── Multi-Recording card ─────────────────────────────────────
+        multi_card = tk.Frame(left, bg=C["bg_card"], padx=20, pady=16)
+        multi_card.pack(fill="x", pady=(0, 10))
+
+        tk.Label(multi_card, text="Multi-Recording", bg=C["bg_card"], fg=C["text"],
+                 font=(FONT, 13, "bold")).pack(anchor="w")
+
+        if not HAS_MULTI_RECORDING:
+            tk.Label(multi_card, text="Multi-recording not available",
+                     bg=C["bg_card"], fg=C["red"], font=(FONT, 9)).pack(anchor="w", pady=(6, 0))
+        else:
+            # Workflow name entry
+            name_row = tk.Frame(multi_card, bg=C["bg_card"])
+            name_row.pack(fill="x", pady=(8, 4))
+            tk.Label(name_row, text="Workflow Name:", bg=C["bg_card"], fg=C["text_dim"],
+                     font=(FONT, 9)).pack(side="left")
+            self._multi_name_var = tk.StringVar(value="my_workflow")
+            tk.Entry(name_row, textvariable=self._multi_name_var, width=20,
+                     bg=C["bg_input"], fg=C["text"], insertbackground=C["text"],
+                     font=(MONO, 9), bd=0, relief="flat").pack(side="left", padx=(6, 0), ipady=3)
+
+            # Number of recordings spinbox
+            count_row = tk.Frame(multi_card, bg=C["bg_card"])
+            count_row.pack(fill="x", pady=(4, 8))
+            tk.Label(count_row, text="Number of recordings:", bg=C["bg_card"], fg=C["text_dim"],
+                     font=(FONT, 9)).pack(side="left")
+            self._multi_count_var = tk.IntVar(value=3)
+            tk.Spinbox(count_row, from_=2, to=10, textvariable=self._multi_count_var, width=4,
+                       bg=C["bg_input"], fg=C["text"], insertbackground=C["text"],
+                       font=(MONO, 9), bd=0, relief="flat",
+                       buttonbackground=C["bg_card_alt"]).pack(side="left", padx=(6, 0))
+
+            # Buttons row
+            multi_btn_row = tk.Frame(multi_card, bg=C["bg_card"])
+            multi_btn_row.pack(fill="x", pady=(4, 4))
+
+            self._multi_start_btn = GlowButton(
+                multi_btn_row, text="Start Multi-Recording", icon="\u23fa",
+                color=C["accent"], hover_color=C["accent_hover"],
+                command=self._multi_start, width=200, height=38, font_size=10,
+            )
+            self._multi_start_btn.pack(side="left", padx=(0, 8))
+
+            self._multi_next_btn = GlowButton(
+                multi_btn_row, text="Next Recording", icon="\u23ed",
+                color=C["blue"], hover_color="#2563eb",
+                command=self._multi_next, width=160, height=38, font_size=10,
+            )
+            self._multi_next_btn.pack(side="left", padx=(0, 8))
+            self._multi_next_btn._label.configure(state="disabled", fg=C["text_muted"])
+
+            # Second button row
+            multi_btn_row2 = tk.Frame(multi_card, bg=C["bg_card"])
+            multi_btn_row2.pack(fill="x", pady=(0, 4))
+
+            self._multi_finish_btn = GlowButton(
+                multi_btn_row2, text="Finish & Analyze", icon="\u2728",
+                color=C["green"], hover_color=C["green_dim"],
+                command=self._multi_finish, width=160, height=38, font_size=10,
+            )
+            self._multi_finish_btn.pack(side="left")
+            self._multi_finish_btn._label.configure(state="disabled", fg=C["text_muted"])
+
+            # Status label
+            self._multi_status = tk.Label(multi_card, text="Ready", bg=C["bg_card"],
+                                          fg=C["text_muted"], font=(FONT, 10))
+            self._multi_status.pack(anchor="w", pady=(4, 0))
 
         # ── Log ──────────────────────────────────────────────────────
         log_card = tk.Frame(left, bg=C["bg_card"], padx=16, pady=12)
@@ -766,6 +847,145 @@ class ActionShotGUI:
             self._log("API payload exported.")
         except Exception as e:
             self._log(f"Error: {e}")
+
+    # ── Multi-recording ─────────────────────────────────────────────
+
+    def _multi_start(self):
+        """Begin the multi-recording session."""
+        if not HAS_MULTI_RECORDING:
+            self._log("Multi-recording module not available.")
+            return
+        if self._multi_recording_active:
+            return
+
+        name = self._multi_name_var.get().strip() or "my_workflow"
+        count = self._multi_count_var.get()
+        output = self.output_var.get()
+
+        self._multi_total = count
+        self._multi_current = 1
+        self._multi_recording_active = True
+        self._multi_session = MultiRecordingSession(
+            workflow_name=name,
+            num_recordings=count,
+            output_dir=output,
+        )
+
+        self._log(f"Multi-recording started: '{name}' ({count} recordings)")
+        self._multi_status.configure(
+            text=f"Recording 1 of {count}", fg=C["yellow"],
+        )
+        self._multi_start_btn._label.configure(state="disabled", fg=C["text_muted"])
+        self._multi_next_btn._label.configure(state="disabled", fg=C["text_muted"])
+        self._multi_finish_btn._label.configure(state="disabled", fg=C["text_muted"])
+
+        # Start the first recording
+        self._multi_record_current()
+
+    def _multi_record_current(self):
+        """Start recording the current take."""
+        idx = self._multi_current
+        total = self._multi_total
+        self._log(f"Recording {idx} of {total} -- press ESC to stop.")
+        self._multi_status.configure(
+            text=f"Recording {idx} of {total}", fg=C["red"],
+        )
+
+        output = self.output_var.get()
+        self.recorder = Recorder(
+            output_dir=output,
+            enable_video=self._video_var.get(),
+            enable_ocr=self._ocr_var.get(),
+        )
+        self.recording = True
+        self.record_btn.set_text("Stop Recording")
+        self.record_btn.set_color(C["red"], C["red_glow"])
+        self.record_btn._icon = "\u23f9"
+        self._rec_status.configure(text=f"Multi {idx}/{total}", fg=C["red"])
+        self._rec_dot.start()
+
+        def _record():
+            self.recorder.start()
+            self.root.after(0, self._multi_on_recording_stopped)
+
+        threading.Thread(target=_record, daemon=True).start()
+        self._start_timer()
+
+    def _multi_on_recording_stopped(self):
+        """Called when the current take finishes."""
+        self.recording = False
+        self.record_btn.set_text("Start Recording")
+        self.record_btn.set_color(C["accent"], C["accent_hover"])
+        self.record_btn._icon = "\u23fa"
+        self._rec_dot.stop()
+        self._stop_timer()
+
+        idx = self._multi_current
+        total = self._multi_total
+
+        if self.recorder and self.recorder.session:
+            session_path = self.recorder.session.path if hasattr(self.recorder.session, "path") else None
+            self._log(f"Recording {idx} of {total} saved ({self.recorder.session.step_count} steps)")
+            try:
+                self._multi_session.add_recording(self.recorder.session)
+            except Exception as e:
+                self._log(f"Warning: could not register recording: {e}")
+
+        if idx < total:
+            self._multi_status.configure(
+                text=f"Recording {idx} of {total} done -- click Next", fg=C["green"],
+            )
+            self._rec_status.configure(text="Multi (paused)", fg=C["yellow"])
+            self._multi_next_btn._label.configure(state="normal", fg=C["white"])
+        else:
+            self._multi_status.configure(
+                text=f"All {total} recordings done -- click Finish & Analyze",
+                fg=C["green"],
+            )
+            self._rec_status.configure(text="Idle", fg=C["text_muted"])
+            self._multi_finish_btn._label.configure(state="normal", fg=C["white"])
+
+        self._refresh_sessions()
+
+    def _multi_next(self):
+        """Advance to the next recording take."""
+        if not self._multi_recording_active:
+            return
+        self._multi_current += 1
+        self._multi_next_btn._label.configure(state="disabled", fg=C["text_muted"])
+        self._multi_record_current()
+
+    def _multi_finish(self):
+        """Run diff and variable inference on all collected recordings."""
+        if not self._multi_recording_active or not self._multi_session:
+            return
+
+        self._log("Running diff analysis across recordings...")
+        self._multi_status.configure(text="Analyzing...", fg=C["yellow"])
+        self._multi_finish_btn._label.configure(state="disabled", fg=C["text_muted"])
+
+        def _analyze():
+            try:
+                diff = MultiRecordingDiff(self._multi_session)
+                result = diff.run()
+                self.root.after(0, lambda: self._multi_analysis_done(result))
+            except Exception as e:
+                self.root.after(0, lambda: self._multi_analysis_done(None, error=str(e)))
+
+        threading.Thread(target=_analyze, daemon=True).start()
+
+    def _multi_analysis_done(self, result, error=None):
+        """Callback when multi-recording analysis completes."""
+        self._multi_recording_active = False
+        self._multi_start_btn._label.configure(state="normal", fg=C["white"])
+
+        if error:
+            self._log(f"Multi-recording analysis error: {error}")
+            self._multi_status.configure(text=f"Error: {error}", fg=C["red"])
+        else:
+            self._log("Multi-recording analysis complete. Enriched IR saved.")
+            self._multi_status.configure(text="Analysis complete", fg=C["green"])
+            self._refresh_sessions()
 
     def run(self):
         self.root.mainloop()
