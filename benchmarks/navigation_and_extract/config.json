@@ -1,0 +1,9 @@
+{
+  "name": "navigation_and_extract",
+  "difficulty": "medium",
+  "app_type": "HR Portal - Intranet",
+  "has_branches": false,
+  "has_loops": false,
+  "step_count": 12,
+  "description": "Navigate portal, search for employee, switch tabs, and extract department and salary data."
+}
