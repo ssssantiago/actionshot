@@ -13,7 +13,6 @@ from .metadata import get_window_info
 from .ocr import extract_text_around, HAS_TESSERACT
 from .monitor import MonitorInfo
 from .video import VideoRecorder
-from .hotkeys import HotkeyManager
 
 
 class Recorder:
