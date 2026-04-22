@@ -1,0 +1,155 @@
+{
+  "workflow_id": "conditional_approval",
+  "description": "Process honorarios (legal fees) approval: check amount, route to socio-gerente if above R$5000, socio-junior if below, with different approval forms.",
+  "inputs": [
+    {"name": "numero_processo", "type": "string", "example": "0001234-56.2024.8.26.0100"},
+    {"name": "valor_honorarios", "type": "string", "example": "7500.00"},
+    {"name": "advogado_responsavel", "type": "string", "example": "Dr. Carlos Mendes - OAB/SP 123.456"}
+  ],
+  "outputs": [
+    {"name": "status_aprovacao", "type": "string"}
+  ],
+  "steps": [
+    {
+      "id": 1,
+      "op": "open_app",
+      "target": "Sistema de Honorarios - Google Chrome"
+    },
+    {
+      "id": 2,
+      "op": "click",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "btnNovoHonorario"},
+        "secondary": {"method": "css_selector", "value": "button#novo-honorario"},
+        "tertiary": {"method": "ocr_anchor", "text": "Novo Honorario"},
+        "fallback": {"method": "coordinates", "x": 150, "y": 55},
+        "label": "Novo Honorario",
+        "control_type": "Button"
+      }
+    },
+    {
+      "id": 3,
+      "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtNumeroProcesso"},
+        "secondary": {"method": "css_selector", "value": "input#numero-processo"},
+        "tertiary": {"method": "ocr_anchor", "text": "Numero do Processo"},
+        "fallback": {"method": "coordinates", "x": 450, "y": 180},
+        "label": "Numero do Processo",
+        "control_type": "Edit"
+      },
+      "value": "$numero_processo"
+    },
+    {
+      "id": 4,
+      "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtValorHonorarios"},
+        "secondary": {"method": "css_selector", "value": "input#valor-honorarios"},
+        "tertiary": {"method": "ocr_anchor", "text": "Valor (R$)"},
+        "fallback": {"method": "coordinates", "x": 450, "y": 250},
+        "label": "Valor Honorarios",
+        "control_type": "Edit"
+      },
+      "value": "$valor_honorarios"
+    },
+    {
+      "id": 5,
+      "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtAdvogado"},
+        "secondary": {"method": "css_selector", "value": "input#advogado-responsavel"},
+        "tertiary": {"method": "ocr_anchor", "text": "Advogado Responsavel"},
+        "fallback": {"method": "coordinates", "x": 450, "y": 320},
+        "label": "Advogado Responsavel",
+        "control_type": "Edit"
+      },
+      "value": "$advogado_responsavel"
+    },
+    {
+      "id": 6,
+      "op": "if_condition",
+      "condition": "valor_honorarios > 5000",
+      "description": "If honorarios exceed R$5000, route to socio-gerente for approval",
+      "then_steps": [
+        {
+          "id": 7,
+          "op": "click",
+          "selector": {
+            "primary": {"method": "uia_automation_id", "value": "btnEncaminharSocioGerente"},
+            "secondary": {"method": "css_selector", "value": "button#encaminhar-socio-gerente"},
+            "tertiary": {"method": "ocr_anchor", "text": "Encaminhar ao Socio-Gerente"},
+            "fallback": {"method": "coordinates", "x": 350, "y": 420},
+            "label": "Encaminhar ao Socio-Gerente",
+            "control_type": "Button"
+          }
+        },
+        {
+          "id": 8,
+          "op": "fill_field",
+          "selector": {
+            "primary": {"method": "uia_automation_id", "value": "txtJustificativa"},
+            "secondary": {"method": "css_selector", "value": "textarea#justificativa"},
+            "tertiary": {"method": "ocr_anchor", "text": "Justificativa"},
+            "fallback": {"method": "coordinates", "x": 450, "y": 500},
+            "label": "Justificativa",
+            "control_type": "Edit"
+          },
+          "value": "Valor acima do limite de aprovacao automatica. Solicita-se aprovacao do socio-gerente."
+        }
+      ],
+      "else_steps": [
+        {
+          "id": 9,
+          "op": "click",
+          "selector": {
+            "primary": {"method": "uia_automation_id", "value": "btnEncaminharSocioJunior"},
+            "secondary": {"method": "css_selector", "value": "button#encaminhar-socio-junior"},
+            "tertiary": {"method": "ocr_anchor", "text": "Encaminhar ao Socio-Junior"},
+            "fallback": {"method": "coordinates", "x": 550, "y": 420},
+            "label": "Encaminhar ao Socio-Junior",
+            "control_type": "Button"
+          }
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "op": "click",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "btnConfirmar"},
+        "secondary": {"method": "css_selector", "value": "button#confirmar-envio"},
+        "tertiary": {"method": "ocr_anchor", "text": "Confirmar Envio"},
+        "fallback": {"method": "coordinates", "x": 450, "y": 560},
+        "label": "Confirmar Envio",
+        "control_type": "Button"
+      }
+    },
+    {
+      "id": 11,
+      "op": "wait_for",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "lblStatusAprovacao"},
+        "secondary": {"method": "css_selector", "value": "span#status-aprovacao"},
+        "tertiary": {"method": "ocr_anchor", "text": "Status:"},
+        "label": "Status da aprovacao",
+        "control_type": "Text"
+      },
+      "timeout_ms": 10000
+    },
+    {
+      "id": 12,
+      "op": "extract_text",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "lblStatusAprovacao"},
+        "secondary": {"method": "css_selector", "value": "span#status-aprovacao"},
+        "tertiary": {"method": "ocr_anchor", "text": "Status:"},
+        "fallback": {"method": "coordinates", "x": 550, "y": 200},
+        "label": "Status aprovacao",
+        "control_type": "Text"
+      },
+      "store_as": "status_aprovacao"
+    }
+  ],
+  "assertions": []
+}

@@ -1,0 +1,132 @@
+{
+  "workflow_id": "java_applet_legacy",
+  "description": "Interact with a legacy Java applet used by older Brazilian court systems (e-SAJ legacy). No UIA tree available - coordinates-only with OCR fallback.",
+  "inputs": [
+    {"name": "numero_oab", "type": "string", "example": "OAB/SP 98.765"},
+    {"name": "senha", "type": "string", "example": "********"},
+    {"name": "numero_processo", "type": "string", "example": "0054321-12.2019.8.26.0001"},
+    {"name": "tipo_peticao", "type": "string", "example": "Peticao Intermediaria"}
+  ],
+  "outputs": [
+    {"name": "protocolo", "type": "string"}
+  ],
+  "steps": [
+    {
+      "id": 1,
+      "op": "open_app",
+      "target": "e-SAJ Peticionamento - Java(TM) Platform SE"
+    },
+    {
+      "id": 2,
+      "op": "wait_for",
+      "selector": {
+        "primary": {"method": "ocr_anchor", "text": "Login do Advogado"},
+        "fallback": {"method": "coordinates", "x": 400, "y": 150},
+        "label": "Java applet login screen",
+        "control_type": "Unknown"
+      },
+      "timeout_ms": 30000,
+      "description": "Java applets load slowly; wait for login screen OCR text"
+    },
+    {
+      "id": 3,
+      "op": "click",
+      "selector": {
+        "primary": {"method": "ocr_anchor", "text": "Numero OAB"},
+        "fallback": {"method": "coordinates", "x": 380, "y": 230},
+        "label": "OAB field (no UIA)",
+        "control_type": "Unknown"
+      }
+    },
+    {
+      "id": 4,
+      "op": "type_text",
+      "value": "$numero_oab",
+      "description": "Type OAB number via keyboard (no fill_field support in Java applet)"
+    },
+    {
+      "id": 5,
+      "op": "click",
+      "selector": {
+        "primary": {"method": "ocr_anchor", "text": "Senha"},
+        "fallback": {"method": "coordinates", "x": 380, "y": 290},
+        "label": "Password field (no UIA)",
+        "control_type": "Unknown"
+      }
+    },
+    {
+      "id": 6,
+      "op": "type_text",
+      "value": "$senha",
+      "description": "Type password via keyboard"
+    },
+    {
+      "id": 7,
+      "op": "click",
+      "selector": {
+        "primary": {"method": "ocr_anchor", "text": "Entrar"},
+        "fallback": {"method": "coordinates", "x": 400, "y": 350},
+        "label": "Login button (no UIA)",
+        "control_type": "Unknown"
+      }
+    },
+    {
+      "id": 8,
+      "op": "wait_for",
+      "selector": {
+        "primary": {"method": "ocr_anchor", "text": "Painel de Peticionamento"},
+        "fallback": {"method": "coordinates", "x": 400, "y": 100},
+        "label": "Main panel loaded",
+        "control_type": "Unknown"
+      },
+      "timeout_ms": 20000
+    },
+    {
+      "id": 9,
+      "op": "click",
+      "selector": {
+        "primary": {"method": "ocr_anchor", "text": "Novo Peticionamento"},
+        "fallback": {"method": "coordinates", "x": 150, "y": 180},
+        "label": "Novo Peticionamento button (no UIA)",
+        "control_type": "Unknown"
+      }
+    },
+    {
+      "id": 10,
+      "op": "click",
+      "selector": {
+        "primary": {"method": "ocr_anchor", "text": "Numero do Processo"},
+        "fallback": {"method": "coordinates", "x": 400, "y": 250},
+        "label": "Processo number field (no UIA)",
+        "control_type": "Unknown"
+      }
+    },
+    {
+      "id": 11,
+      "op": "type_text",
+      "value": "$numero_processo",
+      "description": "Type processo number"
+    },
+    {
+      "id": 12,
+      "op": "click",
+      "selector": {
+        "primary": {"method": "ocr_anchor", "text": "$tipo_peticao"},
+        "fallback": {"method": "coordinates", "x": 400, "y": 340},
+        "label": "Tipo de peticao selection (no UIA)",
+        "control_type": "Unknown"
+      }
+    },
+    {
+      "id": 13,
+      "op": "click",
+      "selector": {
+        "primary": {"method": "ocr_anchor", "text": "Protocolar"},
+        "fallback": {"method": "coordinates", "x": 400, "y": 500},
+        "label": "Protocolar button (no UIA)",
+        "control_type": "Unknown"
+      }
+    }
+  ],
+  "assertions": []
+}

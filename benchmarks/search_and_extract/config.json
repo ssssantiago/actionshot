@@ -1,0 +1,9 @@
+{
+  "name": "search_and_extract",
+  "difficulty": "medium",
+  "app_type": "TJSP - Google Chrome",
+  "has_branches": false,
+  "has_loops": false,
+  "step_count": 10,
+  "description": "Navigate to TJSP jurisprudence, type query, click search, extract processo number and ementa."
+}

@@ -1,0 +1,123 @@
+{
+  "workflow_id": "excel_to_form",
+  "description": "Read data from an Excel spreadsheet and fill a web form with client information.",
+  "inputs": [
+    {"name": "excel_path", "type": "string", "example": "C:\\Clientes\\cadastro_clientes.xlsx"},
+    {"name": "row_number", "type": "string", "example": "2"}
+  ],
+  "outputs": [
+    {"name": "result", "type": "string"}
+  ],
+  "steps": [
+    {
+      "id": 1,
+      "op": "open_app",
+      "target": "cadastro_clientes.xlsx - Microsoft Excel"
+    },
+    {
+      "id": 2,
+      "op": "click",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "A2"},
+        "secondary": {"method": "uia_name", "value": "Celula A2"},
+        "tertiary": {"method": "ocr_anchor", "text": "Nome Completo"},
+        "fallback": {"method": "coordinates", "x": 85, "y": 145},
+        "label": "Cell A2 - Nome",
+        "control_type": "DataItem"
+      }
+    },
+    {
+      "id": 3,
+      "op": "extract_text",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "NameBox"},
+        "tertiary": {"method": "ocr_anchor", "text": "A2"},
+        "fallback": {"method": "coordinates", "x": 85, "y": 145},
+        "label": "Cell value - Nome",
+        "control_type": "Edit"
+      },
+      "store_as": "nome_cliente"
+    },
+    {
+      "id": 4,
+      "op": "extract_text",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "B2"},
+        "tertiary": {"method": "ocr_anchor", "text": "CPF"},
+        "fallback": {"method": "coordinates", "x": 200, "y": 145},
+        "label": "Cell B2 - CPF",
+        "control_type": "DataItem"
+      },
+      "store_as": "cpf_cliente"
+    },
+    {
+      "id": 5,
+      "op": "extract_text",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "C2"},
+        "tertiary": {"method": "ocr_anchor", "text": "Telefone"},
+        "fallback": {"method": "coordinates", "x": 320, "y": 145},
+        "label": "Cell C2 - Telefone",
+        "control_type": "DataItem"
+      },
+      "store_as": "telefone_cliente"
+    },
+    {
+      "id": 6,
+      "op": "open_app",
+      "target": "Cadastro de Clientes - Google Chrome"
+    },
+    {
+      "id": 7,
+      "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtNomeCompleto"},
+        "secondary": {"method": "css_selector", "value": "input#nome-completo"},
+        "tertiary": {"method": "ocr_anchor", "text": "Nome Completo"},
+        "fallback": {"method": "coordinates", "x": 450, "y": 220},
+        "label": "Nome Completo",
+        "control_type": "Edit"
+      },
+      "value": "$nome_cliente"
+    },
+    {
+      "id": 8,
+      "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtCPF"},
+        "secondary": {"method": "css_selector", "value": "input#cpf"},
+        "tertiary": {"method": "ocr_anchor", "text": "CPF"},
+        "fallback": {"method": "coordinates", "x": 450, "y": 290},
+        "label": "CPF",
+        "control_type": "Edit"
+      },
+      "value": "$cpf_cliente"
+    },
+    {
+      "id": 9,
+      "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtTelefone"},
+        "secondary": {"method": "css_selector", "value": "input#telefone"},
+        "tertiary": {"method": "ocr_anchor", "text": "Telefone"},
+        "fallback": {"method": "coordinates", "x": 450, "y": 360},
+        "label": "Telefone",
+        "control_type": "Edit"
+      },
+      "value": "$telefone_cliente"
+    },
+    {
+      "id": 10,
+      "op": "click",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "btnCadastrar"},
+        "secondary": {"method": "css_selector", "value": "button#submit-cadastro"},
+        "tertiary": {"method": "ocr_anchor", "text": "Cadastrar"},
+        "fallback": {"method": "coordinates", "x": 450, "y": 440},
+        "label": "Cadastrar",
+        "control_type": "Button"
+      }
+    }
+  ],
+  "assertions": []
+}

@@ -1,0 +1,9 @@
+{
+  "name": "loop_over_spreadsheet",
+  "difficulty": "hard",
+  "app_type": "Microsoft Excel / Google Chrome",
+  "has_branches": false,
+  "has_loops": true,
+  "step_count": 15,
+  "description": "Loop over spreadsheet rows: read row data, fill web form, submit, next row. 15 steps with loop."
+}

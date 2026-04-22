@@ -1,0 +1,69 @@
+{
+  "workflow_id": "simple_login",
+  "description": "Log into the firm's internal portal with username and password, then wait for the dashboard.",
+  "inputs": [
+    {"name": "username", "type": "string", "example": "guilherme.santiago"},
+    {"name": "password", "type": "string", "example": "********"}
+  ],
+  "outputs": [
+    {"name": "result", "type": "string"}
+  ],
+  "steps": [
+    {
+      "id": 1,
+      "op": "open_app",
+      "target": "Portal Juridico - Google Chrome"
+    },
+    {
+      "id": 2,
+      "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtUsuario"},
+        "secondary": {"method": "css_selector", "value": "input#username"},
+        "tertiary": {"method": "ocr_anchor", "text": "Usuario"},
+        "fallback": {"method": "coordinates", "x": 640, "y": 320},
+        "label": "Usuario",
+        "control_type": "Edit"
+      },
+      "value": "$username"
+    },
+    {
+      "id": 3,
+      "op": "fill_field",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "txtSenha"},
+        "secondary": {"method": "css_selector", "value": "input#password"},
+        "tertiary": {"method": "ocr_anchor", "text": "Senha"},
+        "fallback": {"method": "coordinates", "x": 640, "y": 390},
+        "label": "Senha",
+        "control_type": "Edit"
+      },
+      "value": "$password"
+    },
+    {
+      "id": 4,
+      "op": "click",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "btnEntrar"},
+        "secondary": {"method": "css_selector", "value": "button#login-btn"},
+        "tertiary": {"method": "ocr_anchor", "text": "Entrar"},
+        "fallback": {"method": "coordinates", "x": 640, "y": 460},
+        "label": "Entrar",
+        "control_type": "Button"
+      }
+    },
+    {
+      "id": 5,
+      "op": "wait_for",
+      "selector": {
+        "primary": {"method": "uia_automation_id", "value": "lblDashboard"},
+        "secondary": {"method": "css_selector", "value": "#dashboard-title"},
+        "tertiary": {"method": "ocr_anchor", "text": "Painel de Controle"},
+        "label": "Dashboard title",
+        "control_type": "Text"
+      },
+      "timeout_ms": 15000
+    }
+  ],
+  "assertions": []
+}

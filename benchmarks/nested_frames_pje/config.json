@@ -1,0 +1,9 @@
+{
+  "name": "nested_frames_pje",
+  "difficulty": "hard",
+  "app_type": "PJe - Processo Judicial Eletronico - Google Chrome",
+  "has_branches": false,
+  "has_loops": false,
+  "step_count": 14,
+  "description": "Login to PJe, navigate nested iframes (frameLogin, ngFrame, frameFormulario, framePartes), fill processo form."
+}
