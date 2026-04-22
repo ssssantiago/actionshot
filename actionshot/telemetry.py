@@ -285,7 +285,7 @@ def _percentile(data: list[float], pct: float) -> float:
 class NotificationDispatcher:
     """Sends alerts on failure via configurable channels.
 
-    Channels: ``webhook``, ``email``, ``file``.
+    Channels: ``webhook``, ``email``, ``telegram``, ``file``.
 
     Configuration comes from environment variables or a config dict passed at
     init (e.g. parsed from ``actionshot.yaml``).
@@ -326,6 +326,8 @@ class NotificationDispatcher:
                     self._send_webhook(event)
                 elif ch == "email":
                     self._send_email(event)
+                elif ch == "telegram":
+                    self._send_telegram(event)
                 elif ch == "file":
                     self._send_file(event)
                 else:
@@ -382,6 +384,47 @@ class NotificationDispatcher:
             server.login(user, password)
             server.sendmail(user, [to_addr], msg.as_string())
 
+    def _send_telegram(self, event: dict) -> None:
+        """Send a notification via Telegram Bot API.
+
+        Requires env vars ``ACTIONSHOT_TELEGRAM_BOT_TOKEN`` and
+        ``ACTIONSHOT_TELEGRAM_CHAT_ID``.
+        """
+        bot_token = self._cfg(
+            "telegram_bot_token", env="ACTIONSHOT_TELEGRAM_BOT_TOKEN",
+        )
+        chat_id = self._cfg(
+            "telegram_chat_id", env="ACTIONSHOT_TELEGRAM_CHAT_ID",
+        )
+        if not bot_token or not chat_id:
+            raise ValueError(
+                "Telegram not configured (set ACTIONSHOT_TELEGRAM_BOT_TOKEN "
+                "and ACTIONSHOT_TELEGRAM_CHAT_ID)"
+            )
+
+        wf_name = event.get("workflow_name") or event.get("workflow_id", "unknown")
+        step = event.get("step", "?")
+        error = event.get("error", "unknown error")
+
+        text = (
+            f"\u26a0\ufe0f ActionShot: Workflow '{wf_name}' failed at step "
+            f"{step}: {error}"
+        )
+
+        url = (
+            f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        )
+        payload = json.dumps({"chat_id": chat_id, "text": text}).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status >= 400:
+                raise RuntimeError(f"Telegram API returned HTTP {resp.status}")
+
     def _send_file(self, event: dict) -> None:
         path = self._cfg(
             "notification_log",
@@ -401,6 +444,8 @@ class NotificationDispatcher:
             channels.append("webhook")
         if self._cfg("smtp_host", env="ACTIONSHOT_SMTP_HOST"):
             channels.append("email")
+        if self._cfg("telegram_bot_token", env="ACTIONSHOT_TELEGRAM_BOT_TOKEN"):
+            channels.append("telegram")
         # File channel is always available as a fallback
         channels.append("file")
         return channels
