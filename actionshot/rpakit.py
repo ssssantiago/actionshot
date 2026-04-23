@@ -197,19 +197,60 @@ class _SelectorResolver:
         raise TypeError(f"Invalid selector spec type: {type(spec)}")
 
     def _resolve_single(self, sel: Any, *, timeout: float) -> _ResolvedElement:
-        """Try resolution strategies in order for a single selector value."""
+        """Try resolution strategies in order for a single selector value.
+
+        Understands two dict formats:
+        - IR format: {"method": "uia_automation_id", "value": "txtUsuario"}
+        - Legacy format: {"auto_id": "txtUsuario", "name": "...", "coords": (x, y)}
+        """
         if isinstance(sel, str):
-            # Strategy 1: AutomationId
             return self._by_automation_id(sel, timeout=timeout)
 
         if isinstance(sel, dict):
             method = sel.get("method", "")
 
-            # Web selector strategies (CDP)
+            # ── IR format: {"method": "...", "value": "..."} ──────────
+
+            if method == "uia_automation_id":
+                value = sel.get("value", "")
+                if value:
+                    # Try native UIA first
+                    try:
+                        return self._by_automation_id(value, timeout=timeout)
+                    except Exception:
+                        pass
+                    # Fallback: try as CSS #id via CDP (HTML id == AutomationId)
+                    try:
+                        return self._resolve_web_selector(
+                            {"method": "css_selector", "value": f"#{value}"},
+                            timeout=timeout,
+                        )
+                    except Exception:
+                        pass
+                    raise LookupError(f"UIA automation_id '{value}' not found (native or CDP)")
+
+            if method == "uia_path":
+                # Structural UIA path — try to walk it
+                value = sel.get("value", "")
+                if value:
+                    return self._by_uia_path(value, timeout=timeout)
+
             if method in ("css_selector", "xpath", "accessible_name"):
                 return self._resolve_web_selector(sel, timeout=timeout)
 
-            # Explicit coords shortcut
+            if method == "ocr_anchor":
+                text = sel.get("text", "")
+                if text:
+                    return self._by_ocr(text)
+
+            if method == "coordinates":
+                x = sel.get("x", 0)
+                y = sel.get("y", 0)
+                return _ResolvedElement(None, "", "coords", coords=(int(x), int(y)))
+
+            # ── Legacy format ─────────────────────────────────────────
+
+            # Explicit coords tuple
             if "coords" in sel:
                 x, y = sel["coords"]
                 return _ResolvedElement(None, "", "coords", coords=(int(x), int(y)))
@@ -218,39 +259,52 @@ class _SelectorResolver:
             name = sel.get("name")
             ctrl = sel.get("control_type")
 
-            # 1. AutomationId
             if auto_id:
                 try:
                     return self._by_automation_id(auto_id, timeout=timeout)
                 except Exception:
                     pass
 
-            # 2. Name + ControlType
             if name:
                 try:
                     return self._by_name_type(name, ctrl, timeout=timeout)
                 except Exception:
                     pass
 
-            # 3. OCR
             if name and extract_structured is not None and take_screenshot is not None:
                 try:
                     return self._by_ocr(name)
                 except Exception:
                     pass
 
-            # 4. Coord fallback
             if "coords" in sel:
                 x, y = sel["coords"]
                 return _ResolvedElement(None, "", "coords", coords=(int(x), int(y)))
 
             raise LookupError(f"No resolution strategy succeeded for {sel!r}")
 
-        # If it's a plain string that came through a dict level
-        if isinstance(sel, str):
-            return self._by_automation_id(sel, timeout=timeout)
-
         raise TypeError(f"Unsupported selector value: {sel!r}")
+
+    def _by_uia_path(self, path: str, *, timeout: float) -> _ResolvedElement:
+        """Walk a structural UIA path like Window[@name='X']/Pane/Button[@name='Y']."""
+        import re
+        parts = path.split("/")
+        current = self._window
+        for part in parts[1:]:  # skip the Window root
+            match = re.match(r"(\w+)(?:\[@(\w+)='([^']+)'\])?", part)
+            if not match:
+                continue
+            ctrl_type = match.group(1)
+            attr = match.group(2)
+            val = match.group(3)
+            kwargs = {"control_type": ctrl_type, "found_index": 0}
+            if attr == "name" and val:
+                kwargs["title"] = val
+            elif attr == "auto_id" and val:
+                kwargs["auto_id"] = val
+            current = current.child_window(**kwargs)
+        current.wait("exists visible", timeout=timeout)
+        return _ResolvedElement(current, "", "uia_path")
 
     # -- resolution strategies -----------------------------------------------
 
