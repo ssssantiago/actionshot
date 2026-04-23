@@ -112,14 +112,15 @@ class DependencyDetector:
                 continue
 
             # For each keypress with a typed value, check prior reads
-            if event.event_type == "keypress" and event.value:
-                typed_text = event.value
+            typed_text = event.value or event.metadata.get("text", "")
+            if event.event_type == "keypress" and typed_text:
                 for read_ev in read_events:
                     if read_ev.app_name == event.app_name:
                         continue
                     if not read_ev.value:
                         continue
-                    if self._has_common_substring(read_ev.value, typed_text, min_len=5):
+                    match = self._find_common_substring(read_ev.value, typed_text, min_len=5)
+                    if match:
                         edges.append(AppDependencyEdge(
                             from_app=read_ev.app_name,
                             to_app=event.app_name,
@@ -127,9 +128,8 @@ class DependencyDetector:
                             source_event_id=read_ev.id,
                             target_event_id=event.id,
                             evidence=(
-                                f"Text from {read_ev.app_name} "
-                                f"(event {read_ev.id}) found in typing in "
-                                f"{event.app_name} (event {event.id})"
+                                f"Substring '{match}' lida em {read_ev.app_name} "
+                                f"e digitada em {event.app_name}"
                             ),
                         ))
                         # One edge per (read_event, type_event) pair is enough
@@ -166,16 +166,24 @@ class DependencyDetector:
     @staticmethod
     def _is_read_event(event: RecordedEvent) -> bool:
         """Return True if the event represents a read/extract action."""
-        action = event.metadata.get("action", "")
-        return "extract" in action.lower() or "read" in action.lower()
+        et = event.event_type.lower()
+        action = event.metadata.get("action", "").lower()
+        combined = et + " " + action
+        return "extract" in combined or "read" in combined
+
+    @staticmethod
+    def _find_common_substring(source: str, target: str, min_len: int = 5) -> str | None:
+        """Return the longest common substring of at least *min_len* chars, or None."""
+        if len(source) < min_len or len(target) < min_len:
+            return None
+        best = None
+        for length in range(min_len, min(len(source), len(target)) + 1):
+            for i in range(len(source) - length + 1):
+                sub = source[i:i + length]
+                if sub in target:
+                    best = sub
+        return best
 
     @staticmethod
     def _has_common_substring(source: str, target: str, min_len: int = 5) -> bool:
-        """Return True if *source* and *target* share a substring of at least *min_len* chars."""
-        if len(source) < min_len or len(target) < min_len:
-            return False
-        # Check every substring of length min_len from source in target
-        for i in range(len(source) - min_len + 1):
-            if source[i:i + min_len] in target:
-                return True
-        return False
+        return DependencyDetector._find_common_substring(source, target, min_len) is not None

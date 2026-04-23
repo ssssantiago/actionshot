@@ -50,9 +50,10 @@ class WorkflowScope:
     def is_in_scope(self, process_name: str) -> bool:
         """Check if a process is in the declared scope.
 
-        Returns True when *process_name* matches any entry in
-        ``APP_PROCESS_MAP`` for one of the ``declared_apps``.
+        Blacklisted processes are NEVER in scope, even if "other" is declared.
         """
+        if self.is_blacklisted(process_name):
+            return False
         normalized = self.normalize_app_name(process_name)
         return normalized in self.declared_apps
 
