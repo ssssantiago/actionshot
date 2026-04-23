@@ -18,3 +18,7 @@ recordings/
 *.swp
 *.swo
 .claude/
+.chrome_test/
+rpakit_logs/
+healing_data/
+benchmark_report*.json
