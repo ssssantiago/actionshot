@@ -18,28 +18,37 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 _SYSTEM_RULES = """\
-You are an expert desktop RPA engineer.  You receive a declarative workflow IR
-(Intermediate Representation) that describes a series of desktop interactions a
-user wants to automate.
+You are an expert desktop RPA engineer. You receive a declarative workflow IR
+and generate a Python script using the rpakit SDK.
 
-## Mandatory Rules
+## MANDATORY RULES — violating any of these is a generation failure
 
-1. **Use the rpakit SDK exclusively.**  Do NOT use pyautogui, pywinauto,
-   keyboard, mouse, or any other library for UI interaction.  All automation
-   MUST go through rpakit's public API.
-2. **Follow the selector hierarchy.**  Each step includes a selector with up to
-   four levels of specificity.  Always attempt selectors in this order:
-   - `primary` (UIA AutomationId) -- most stable
-   - `secondary` (structural UIA path)
-   - `tertiary` (OCR anchor text)
-   - `fallback` (raw screen coordinates) -- last resort
-3. **Use variables.**  Any value prefixed with `$` is a workflow input.  Accept
-   these as function parameters or read them from a config dict.
-4. **Add waits.**  Before interacting with any element, call
-   `rpakit.wait_for()` to ensure the element is visible and ready.
-5. **Handle errors gracefully.**  Wrap interactions in try/except and use
-   rpakit's retry helpers.
-6. **Return only the Python script.**  No prose, no markdown fences.
+1. **Use ONLY the rpakit SDK.** Never import pyautogui, pywinauto, keyboard,
+   mouse, subprocess, or any other UI library. Every interaction goes through
+   the `UI` class instance.
+
+2. **The @run_workflow decorator is mandatory.** Every generated script must
+   wrap the main function with `@rpakit.run_workflow("workflow_name")`.
+
+3. **Selector hierarchy is handled by rpakit internally.** Pass the full
+   selector dict from the IR directly to UI methods. Do NOT implement your own
+   fallback logic, try/except chains for selectors, or manual resolution.
+   rpakit.UI resolves primary → secondary → tertiary → fallback automatically.
+
+4. **NEVER use time.sleep() as a fallback.** If ui.wait_for() fails, let the
+   exception propagate. The @run_workflow decorator captures failure context
+   automatically.
+
+5. **NEVER fabricate success.** If the IR has an extract_text step, use
+   ui.read() and return the extracted value. If the IR has NO extract_text
+   step, return an empty dict `{}`. NEVER return `{"result": "success"}` or
+   `{"result": "Login successful"}` — that is lying about verification.
+
+6. **$variables become function parameters.** Any value prefixed with $ in the
+   IR maps to a typed function parameter with the same name.
+
+7. **Return ONLY the Python script.** No prose, no markdown fences, no
+   explanation. Just the code.
 """
 
 
@@ -48,47 +57,61 @@ user wants to automate.
 # ---------------------------------------------------------------------------
 
 _SDK_REFERENCE = """\
-## rpakit SDK Reference
+## rpakit SDK Reference (EXACT public API — use nothing else)
 
 ```python
-import rpakit
+from actionshot.rpakit import UI, run_workflow, wait, log
 
 # -- Initialization --
-app = rpakit.connect(title="Window Title")       # connect to a running app
-app = rpakit.launch("path/to/app.exe")           # launch and connect
+# UI.attach() is a classmethod that finds a window by title substring
+ui = UI.attach("Window Title")
+
+# -- Decorator (MANDATORY) --
+@run_workflow("workflow_name")
+def my_workflow(param1: str, param2: str) -> dict:
+    ui = UI.attach("Window Title")
+    # ... workflow steps ...
+    return {"output_field": value}
 
 # -- Selectors --
-# Build a selector from the IR's selector dict:
-sel = rpakit.Selector(automation_id="myId")       # primary
-sel = rpakit.Selector(uia_path="Window/Pane/Edit")  # secondary
-sel = rpakit.Selector(ocr_text="Label Text", region=(x1, y1, x2, y2))  # tertiary
-sel = rpakit.Selector(coords=(x, y))              # fallback
+# Pass the IR's selector dict directly. rpakit resolves the hierarchy
+# internally (primary → secondary → tertiary → fallback). Example:
+selector = {
+    "primary": {"method": "uia_automation_id", "value": "btnSave"},
+    "secondary": {"method": "uia_path", "value": "Window/Pane/Button"},
+    "tertiary": {"method": "ocr_anchor", "text": "Save"},
+    "fallback": {"method": "coordinates", "x": 500, "y": 300}
+}
+# You can also pass a plain string for AutomationId: ui.click("btnSave")
+
+# -- Interactions (all are methods on the ui instance) --
+ui.click(selector)                    # click element (auto-retry 3x)
+ui.fill(selector, "text value")       # clear + type into field
+ui.select(selector, "Option Label")   # select from dropdown/combobox
+ui.navigate(["Menu", "Submenu"])      # click through menu path
+ui.scroll(selector, amount=3)         # scroll element
+ui.drag(from_selector, to_selector)   # drag and drop
 
 # -- Waits --
-rpakit.wait_for(sel, timeout_ms=5000)             # block until element exists
-rpakit.wait_until_gone(sel, timeout_ms=5000)      # block until element disappears
-
-# -- Interactions --
-rpakit.click(sel)                                 # left click
-rpakit.double_click(sel)                          # double click
-rpakit.right_click(sel)                           # right click
-rpakit.fill(sel, "text value")                    # clear field and type text
-rpakit.select_option(sel, "Option Label")         # select from dropdown / combo
-rpakit.set_checkbox(sel, checked=True)            # check or uncheck
-rpakit.scroll(sel, direction="down", amount=3)    # scroll inside element
-rpakit.drag(from_sel, to_sel)                     # drag and drop
-rpakit.press_keys("ctrl+c")                       # keyboard shortcut
-rpakit.type_text("hello")                         # type without targeting
+ui.wait_for(selector)                 # wait until element visible (default 10s timeout)
 
 # -- Reading --
-text = rpakit.extract_text(sel)                   # get element's text content
-exists = rpakit.exists(sel)                       # bool check
-value = rpakit.get_attribute(sel, "Value")        # read UIA attribute
+text = ui.read(selector)              # extract text from element
 
-# -- Control flow helpers --
-rpakit.retry(fn, retries=3, delay_ms=1000)        # retry a callable
-rpakit.loop(fn, times=5)                          # repeat a callable N times
+# -- Browser (if app is Chrome/Edge) --
+result = ui.execute_js("document.title")
+
+# -- Utilities (top-level, not on ui) --
+wait(2, reason="page loading")        # explicit wait with reason (use sparingly)
+log("Step completed")                 # structured log entry
 ```
+
+## What NOT to do
+- Do NOT call `rpakit.connect()`, `rpakit.Selector()`, `rpakit.exists()` — these do not exist
+- Do NOT implement manual selector fallback logic — rpakit handles this
+- Do NOT use `time.sleep()` — use `ui.wait_for()` or `wait()`
+- Do NOT catch exceptions to retry selectors — rpakit retries internally
+- Do NOT return `{"result": "success"}` without calling `ui.read()` to verify
 """
 
 
@@ -346,7 +369,7 @@ def generate_api_payload(
             })
 
     return {
-        "model": "claude-sonnet-4-6-20250514",
+        "model": "claude-sonnet-4-5-20250929",
         "max_tokens": 8192,
         "system": _SYSTEM_RULES,
         "messages": [

@@ -224,80 +224,90 @@ class BenchmarkSuite:
         """Generate a script from IR via the Claude API.
 
         Returns (script_text, generation_time_ms, token_count).
-        If the anthropic SDK is not available, falls back to a template-based
-        stub so the benchmark can still exercise metric computation.
+        Falls back to a stub ONLY if anthropic SDK is not installed.
+        Authentication and API errors are raised, not swallowed.
         """
+        from actionshot.prompt_template import generate_api_payload
+
         try:
-            from actionshot.prompt_template import generate_api_payload
             import anthropic
+        except ImportError:
+            print("  [WARN] anthropic SDK not installed — using stub generator")
+            return self._generate_stub(ir)
 
-            client = anthropic.Anthropic()
-            payload = generate_api_payload(ir)
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            print("  [WARN] ANTHROPIC_API_KEY not set — using stub generator")
+            return self._generate_stub(ir)
 
-            start = time.perf_counter()
-            message = client.messages.create(**payload)
-            elapsed_ms = (time.perf_counter() - start) * 1000
+        client = anthropic.Anthropic(api_key=api_key)
+        payload = generate_api_payload(ir)
 
-            script = message.content[0].text
-            # Strip markdown fences
-            if script.startswith("```python"):
-                script = script[len("```python"):].strip()
-            if script.startswith("```"):
-                script = script[3:].strip()
-            if script.endswith("```"):
-                script = script[:-3].strip()
+        start = time.perf_counter()
+        message = client.messages.create(**payload)
+        elapsed_ms = (time.perf_counter() - start) * 1000
 
-            token_count = message.usage.input_tokens + message.usage.output_tokens
-            return script, elapsed_ms, token_count
+        script = message.content[0].text
+        # Strip markdown fences
+        if script.startswith("```python"):
+            script = script[len("```python"):].strip()
+        if script.startswith("```"):
+            script = script[3:].strip()
+        if script.endswith("```"):
+            script = script[:-3].strip()
 
-        except Exception:
-            # Fallback: return a minimal stub so metrics still run
-            start = time.perf_counter()
-            lines = ['import rpakit', '', 'def run():']
-            for step in ir.get("steps", []):
-                op = step.get("op", "custom_step")
-                sel = step.get("selector", {})
-                primary = sel.get("primary", {})
-                fallback = sel.get("fallback", {})
+        token_count = message.usage.input_tokens + message.usage.output_tokens
+        return script, elapsed_ms, token_count
 
-                if op == "click":
-                    if primary.get("value"):
-                        lines.append(
-                            f'    rpakit.click(rpakit.Selector(automation_id="{primary["value"]}"))'
-                        )
-                    elif fallback.get("x") is not None:
-                        lines.append(
-                            f'    rpakit.click(rpakit.Selector(coords=({fallback["x"]}, {fallback["y"]})))'
-                        )
-                elif op == "fill_field":
-                    val = step.get("value", "")
-                    if primary.get("value"):
-                        lines.append(
-                            f'    rpakit.fill(rpakit.Selector(automation_id="{primary["value"]}"), "{val}")'
-                        )
-                    elif fallback.get("x") is not None:
-                        lines.append(
-                            f'    rpakit.fill(rpakit.Selector(coords=({fallback["x"]}, {fallback["y"]})), "{val}")'
-                        )
-                elif op == "open_app":
-                    target = step.get("target", "App")
-                    lines.append(f'    app = rpakit.connect(title="{target}")')
-                elif op == "if_condition":
-                    lines.append(f'    # Conditional: {step.get("condition", "")}')
-                elif op == "loop":
-                    iters = step.get("iterations", 1)
-                    lines.append(f'    for _i in range({iters}):')
-                    lines.append(f'        pass  # loop body')
-                else:
-                    lines.append(f'    # {op}: {step.get("description", "")}')
+    def _generate_stub(self, ir: dict) -> tuple[str, float, int]:
+        """Fallback stub generator when API is unavailable. Clearly marked."""
+        start = time.perf_counter()
+        lines = ['# STUB — generated without AI (API unavailable)', 'import rpakit', '', 'def run():']
 
-            lines.append('')
-            lines.append('if __name__ == "__main__":')
-            lines.append('    run()')
+        for step in ir.get("steps", []):
+            op = step.get("op", "custom_step")
+            sel = step.get("selector", {})
+            primary = sel.get("primary", {})
+            fallback = sel.get("fallback", {})
 
-            elapsed_ms = (time.perf_counter() - start) * 1000
-            script = "\n".join(lines)
-            return script, elapsed_ms, 0
+            if op == "click":
+                if primary.get("value"):
+                    lines.append(
+                        f'    rpakit.click(rpakit.Selector(automation_id="{primary["value"]}"))'
+                    )
+                elif fallback.get("x") is not None:
+                    lines.append(
+                        f'    rpakit.click(rpakit.Selector(coords=({fallback["x"]}, {fallback["y"]})))'
+                    )
+            elif op == "fill_field":
+                val = step.get("value", "")
+                if primary.get("value"):
+                    lines.append(
+                        f'    rpakit.fill(rpakit.Selector(automation_id="{primary["value"]}"), "{val}")'
+                    )
+                elif fallback.get("x") is not None:
+                    lines.append(
+                        f'    rpakit.fill(rpakit.Selector(coords=({fallback["x"]}, {fallback["y"]})), "{val}")'
+                    )
+            elif op == "open_app":
+                target = step.get("target", "App")
+                lines.append(f'    app = rpakit.connect(title="{target}")')
+            elif op == "if_condition":
+                lines.append(f'    # Conditional: {step.get("condition", "")}')
+            elif op == "loop":
+                iters = step.get("iterations", 1)
+                lines.append(f'    for _i in range({iters}):')
+                lines.append(f'        pass  # loop body')
+            else:
+                lines.append(f'    # {op}: {step.get("description", "")}')
+
+        lines.append('')
+        lines.append('if __name__ == "__main__":')
+        lines.append('    run()')
+
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        script = "\n".join(lines)
+        return script, elapsed_ms, 0
 
     # -- single case --
 
