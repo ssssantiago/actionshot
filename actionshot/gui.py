@@ -31,6 +31,11 @@ try:
 except Exception:
     IRCompiler = None
 
+try:
+    from .scope import WorkflowScope
+except Exception:
+    WorkflowScope = None
+
 
 # ── Theme ─────────────────────────────────────────────────────────────
 
@@ -80,6 +85,7 @@ class ActionShotApp(ctk.CTk):
         self._timer_start = None
         self._timer_id = None
         self._current_page = "home"
+        self._current_scope = None
 
         self._build_nav()
         self._build_pages()
@@ -107,8 +113,10 @@ class ActionShotApp(ctk.CTk):
         self._nav_btns = {}
         nav_items = [
             ("home", "Inicio"),
+            ("setup", "Configurar Gravacao"),
             ("record", "Gravar"),
             ("review", "Revisar Passos"),
+            ("review_post", "Revisao Pos-Gravacao"),
             ("builder", "Builder"),
             ("config", "Configurar"),
             ("send", "Enviar pro Dev"),
@@ -158,8 +166,10 @@ class ActionShotApp(ctk.CTk):
     def _build_pages(self):
         self._pages = {}
         self._build_home_page()
+        self._build_setup_page()
         self._build_record_page()
         self._build_review_page()
+        self._build_review_post_page()
         self._build_builder_page()
         self._build_config_page()
         self._build_send_page()
@@ -268,6 +278,356 @@ class ActionShotApp(ctk.CTk):
         self._nav_status.configure(text=f"{os.path.basename(path)}")
         self._show_page("review")
 
+    # ── SETUP PAGE ────────────────────────────────────────────────────
+
+    def _build_setup_page(self):
+        page = ctk.CTkFrame(self, fg_color=BG)
+        self._pages["setup"] = page
+
+        scroll = ctk.CTkScrollableFrame(page, fg_color=BG)
+        scroll.pack(fill="both", expand=True, padx=0, pady=0)
+
+        # Card container
+        card = ctk.CTkFrame(scroll, fg_color=CARD, corner_radius=16)
+        card.pack(fill="x", padx=30, pady=(30, 20))
+
+        ctk.CTkLabel(card, text="Configurar Gravacao",
+                     font=ctk.CTkFont(size=22, weight="bold"),
+                     text_color=TEXT).pack(anchor="w", padx=24, pady=(24, 16))
+
+        # Workflow name
+        ctk.CTkLabel(card, text="Nome do Workflow",
+                     font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color=TEXT).pack(anchor="w", padx=24, pady=(0, 4))
+        self._setup_workflow_name = ctk.CTkEntry(
+            card, placeholder_text="nome_do_workflow",
+            font=ctk.CTkFont(size=13), height=36)
+        self._setup_workflow_name.pack(fill="x", padx=24, pady=(0, 16))
+
+        # Apps suportados
+        ctk.CTkLabel(card, text="Apps suportados",
+                     font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color=TEXT).pack(anchor="w", padx=24, pady=(0, 4))
+
+        apps_card = ctk.CTkFrame(card, fg_color="#1e1e3a", corner_radius=10)
+        apps_card.pack(fill="x", padx=24, pady=(0, 16))
+
+        self._setup_app_vars = {}
+        self._setup_conditional_frames = {}
+
+        app_defs = [
+            ("chrome", "Google Chrome (requer CDP)"),
+            ("excel", "Microsoft Excel"),
+            ("word", "Microsoft Word"),
+            ("outlook", "Microsoft Outlook"),
+            ("generic", "Outro aplicativo Windows (generico)"),
+        ]
+
+        for app_id, app_label in app_defs:
+            var = ctk.BooleanVar(value=False)
+            self._setup_app_vars[app_id] = var
+
+            cb = ctk.CTkCheckBox(
+                apps_card, text=app_label, variable=var,
+                font=ctk.CTkFont(size=12),
+                checkbox_width=20, checkbox_height=20,
+                fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                command=lambda aid=app_id: self._setup_toggle_app(aid),
+            )
+            cb.pack(anchor="w", padx=16, pady=(10, 2))
+
+            # Conditional fields frame (hidden by default)
+            cond_frame = ctk.CTkFrame(apps_card, fg_color="transparent")
+            self._setup_conditional_frames[app_id] = cond_frame
+            # Don't pack yet — shown on toggle
+
+        # Build conditional field widgets (but keep them hidden)
+        self._setup_conditional_widgets = {}
+
+        # Chrome: URL inicial
+        chrome_frame = self._setup_conditional_frames["chrome"]
+        ctk.CTkLabel(chrome_frame, text="URL inicial (opcional)",
+                     font=ctk.CTkFont(size=11), text_color=DIM).pack(anchor="w", padx=32, pady=(4, 2))
+        self._setup_chrome_url = ctk.CTkEntry(
+            chrome_frame, placeholder_text="https://...",
+            font=ctk.CTkFont(size=12), height=32)
+        self._setup_chrome_url.pack(fill="x", padx=32, pady=(0, 8))
+
+        # Excel: Arquivo inicial + file picker
+        excel_frame = self._setup_conditional_frames["excel"]
+        ctk.CTkLabel(excel_frame, text="Arquivo inicial (opcional)",
+                     font=ctk.CTkFont(size=11), text_color=DIM).pack(anchor="w", padx=32, pady=(4, 2))
+        excel_row = ctk.CTkFrame(excel_frame, fg_color="transparent")
+        excel_row.pack(fill="x", padx=32, pady=(0, 8))
+        self._setup_excel_file = ctk.CTkEntry(
+            excel_row, placeholder_text="Caminho do arquivo .xlsx",
+            font=ctk.CTkFont(size=12), height=32)
+        self._setup_excel_file.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        ctk.CTkButton(excel_row, text="...", width=36, height=32,
+                      fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                      font=ctk.CTkFont(size=12),
+                      command=lambda: self._setup_pick_file(self._setup_excel_file, "Excel", "*.xlsx *.xls *.csv")
+                      ).pack(side="right")
+
+        # Word: Arquivo inicial + file picker
+        word_frame = self._setup_conditional_frames["word"]
+        ctk.CTkLabel(word_frame, text="Arquivo inicial (opcional)",
+                     font=ctk.CTkFont(size=11), text_color=DIM).pack(anchor="w", padx=32, pady=(4, 2))
+        word_row = ctk.CTkFrame(word_frame, fg_color="transparent")
+        word_row.pack(fill="x", padx=32, pady=(0, 8))
+        self._setup_word_file = ctk.CTkEntry(
+            word_row, placeholder_text="Caminho do arquivo .docx",
+            font=ctk.CTkFont(size=12), height=32)
+        self._setup_word_file.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        ctk.CTkButton(word_row, text="...", width=36, height=32,
+                      fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                      font=ctk.CTkFont(size=12),
+                      command=lambda: self._setup_pick_file(self._setup_word_file, "Word", "*.docx *.doc")
+                      ).pack(side="right")
+
+        # Status / progress area
+        self._setup_status_frame = ctk.CTkFrame(card, fg_color="transparent")
+        self._setup_status_frame.pack(fill="x", padx=24, pady=(0, 8))
+        self._setup_status_label = ctk.CTkLabel(
+            self._setup_status_frame, text="", font=ctk.CTkFont(size=12),
+            text_color=YELLOW)
+        self._setup_status_label.pack(anchor="w")
+
+        # Buttons
+        btn_frame = ctk.CTkFrame(card, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=24, pady=(0, 24))
+
+        ctk.CTkButton(btn_frame, text="Cancelar", width=120, height=40,
+                      fg_color=MUTED, hover_color="#64748b",
+                      font=ctk.CTkFont(size=13), corner_radius=10,
+                      command=lambda: self._show_page("home")).pack(side="left", padx=(0, 12))
+
+        ctk.CTkButton(btn_frame, text="Preparar e Comecar", width=200, height=40,
+                      fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                      font=ctk.CTkFont(size=14, weight="bold"), corner_radius=10,
+                      command=self._setup_prepare_and_start).pack(side="left")
+
+    def _setup_toggle_app(self, app_id):
+        """Show/hide conditional fields based on checkbox state."""
+        frame = self._setup_conditional_frames.get(app_id)
+        if not frame:
+            return
+        if self._setup_app_vars[app_id].get():
+            frame.pack(fill="x", pady=(0, 4))
+        else:
+            frame.pack_forget()
+
+    def _setup_pick_file(self, entry_widget, type_name, patterns):
+        """Open file dialog and populate entry."""
+        filetypes = [(type_name, patterns), ("Todos", "*.*")]
+        path = filedialog.askopenfilename(title=f"Selecionar arquivo {type_name}",
+                                          filetypes=filetypes)
+        if path:
+            entry_widget.delete(0, "end")
+            entry_widget.insert(0, path)
+
+    def _setup_prepare_and_start(self):
+        """Build WorkflowScope from form, prepare, then start recording."""
+        # Gather form values
+        workflow_name = self._setup_workflow_name.get().strip() or "workflow"
+        selected_apps = [aid for aid, var in self._setup_app_vars.items() if var.get()]
+
+        if not selected_apps:
+            self._setup_status_label.configure(text="Selecione pelo menos um aplicativo.", text_color=RED)
+            return
+
+        # Build scope dict
+        scope_data = {
+            "workflow_name": workflow_name,
+            "apps": selected_apps,
+            "chrome_url": self._setup_chrome_url.get().strip() if "chrome" in selected_apps else "",
+            "excel_file": self._setup_excel_file.get().strip() if "excel" in selected_apps else "",
+            "word_file": self._setup_word_file.get().strip() if "word" in selected_apps else "",
+        }
+
+        # Try to create WorkflowScope
+        if WorkflowScope is not None:
+            try:
+                self._current_scope = WorkflowScope(**scope_data)
+            except Exception as e:
+                self._current_scope = type("_Scope", (), scope_data)()
+        else:
+            # WorkflowScope not available — use a simple namespace
+            self._current_scope = type("_Scope", (), scope_data)()
+
+        self._setup_status_label.configure(text="", text_color=YELLOW)
+        self._prepare_and_record()
+
+    def _prepare_and_record(self):
+        """Prepare scope (e.g. start Chrome CDP) then switch to record page and start."""
+        scope = self._current_scope
+        apps = getattr(scope, "apps", [])
+
+        # Check if Chrome needs CDP preparation
+        if "chrome" in apps:
+            self._setup_status_label.configure(text="Preparando Chrome...", text_color=YELLOW)
+            self.update_idletasks()
+
+            # Check if Chrome is running without CDP
+            try:
+                from .cdp import check_cdp_available, is_chrome_running
+                cdp_ok = check_cdp_available()
+                chrome_running = is_chrome_running()
+
+                if not cdp_ok and chrome_running:
+                    # Need to restart Chrome — show dialog
+                    self._show_chrome_restart_dialog()
+                    return
+                elif not cdp_ok and not chrome_running:
+                    # Chrome not running — we can launch with CDP directly
+                    self._setup_status_label.configure(
+                        text="Chrome sera iniciado com modo de depuracao.", text_color=GREEN)
+            except ImportError:
+                # cdp module not available — proceed without preparation
+                pass
+            except Exception as e:
+                self._setup_status_label.configure(
+                    text=f"Aviso: nao foi possivel verificar Chrome: {e}", text_color=YELLOW)
+
+        # Prepare other apps
+        for app in apps:
+            if app == "chrome":
+                continue
+            self._setup_status_label.configure(text=f"Preparando {app}...", text_color=YELLOW)
+            self.update_idletasks()
+
+        # Try scope preparation if available
+        if hasattr(scope, "prepare") and callable(scope.prepare):
+            def _do_prepare():
+                try:
+                    scope.prepare()
+                    self.after(0, self._setup_prep_done)
+                except Exception as e:
+                    self.after(0, lambda: self._setup_prep_failed(str(e)))
+
+            threading.Thread(target=_do_prepare, daemon=True).start()
+            return
+
+        # No special preparation needed — go straight to recording
+        self._setup_prep_done()
+
+    def _setup_prep_done(self):
+        """Scope preparation succeeded — switch to record and start."""
+        self._setup_status_label.configure(text="Pronto! Iniciando gravacao...", text_color=GREEN)
+        self.update_idletasks()
+        self._show_page("record")
+        # Auto-start recording
+        if not self.recording:
+            self._toggle_recording()
+
+    def _setup_prep_failed(self, error_msg):
+        """Scope preparation failed — show error on setup page."""
+        self._setup_status_label.configure(
+            text=f"Erro na preparacao: {error_msg}", text_color=RED)
+
+    # ── Chrome Restart Dialog ─────────────────────────────────────────
+
+    def _show_chrome_restart_dialog(self):
+        """Modal dialog when Chrome needs restart for CDP."""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Preciso reiniciar o Chrome")
+        dialog.geometry("500x280")
+        dialog.configure(fg_color=BG)
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        dialog.grab_set()
+
+        # Try dark title bar
+        try:
+            from ctypes import windll, byref, c_int
+            dialog.update()
+            hwnd = windll.user32.GetParent(dialog.winfo_id())
+            windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, byref(c_int(2)), 4)
+        except Exception:
+            pass
+
+        # Content
+        ctk.CTkLabel(dialog, text="Preciso reiniciar o Chrome",
+                     font=ctk.CTkFont(size=18, weight="bold"),
+                     text_color=TEXT).pack(padx=24, pady=(24, 8))
+
+        ctk.CTkLabel(dialog,
+                     text="Para gravar interacoes no Chrome, preciso abri-lo com modo de depuracao.\n"
+                          "Salve seu trabalho antes de continuar.",
+                     font=ctk.CTkFont(size=13), text_color=DIM,
+                     wraplength=440, justify="center").pack(padx=24, pady=(0, 16))
+
+        # Countdown label (hidden initially)
+        self._chrome_countdown_label = ctk.CTkLabel(
+            dialog, text="", font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=YELLOW)
+        self._chrome_countdown_label.pack(padx=24, pady=(0, 8))
+
+        # Buttons
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=24, pady=(0, 24))
+
+        ctk.CTkButton(btn_frame, text="Cancelar", width=100, height=38,
+                      fg_color=MUTED, hover_color="#64748b",
+                      font=ctk.CTkFont(size=12), corner_radius=8,
+                      command=lambda: self._chrome_dialog_cancel(dialog)
+                      ).pack(side="left", padx=(0, 8))
+
+        ctk.CTkButton(btn_frame, text="Salvar meu trabalho primeiro", width=200, height=38,
+                      fg_color=BLUE, hover_color="#2563eb",
+                      font=ctk.CTkFont(size=12), corner_radius=8,
+                      command=lambda: self._chrome_dialog_wait(dialog)
+                      ).pack(side="left", padx=(0, 8))
+
+        ctk.CTkButton(btn_frame, text="Reiniciar Chrome agora", width=180, height=38,
+                      fg_color=RED, hover_color="#dc2626",
+                      font=ctk.CTkFont(size=12, weight="bold"), corner_radius=8,
+                      command=lambda: self._chrome_dialog_restart_now(dialog)
+                      ).pack(side="left")
+
+        self._chrome_dialog_ref = dialog
+
+    def _chrome_dialog_cancel(self, dialog):
+        dialog.grab_release()
+        dialog.destroy()
+        self._setup_status_label.configure(text="Reinicio do Chrome cancelado.", text_color=MUTED)
+
+    def _chrome_dialog_wait(self, dialog):
+        """Start 15s countdown then restart Chrome."""
+        self._chrome_countdown_remaining = 15
+        self._chrome_dialog_tick(dialog)
+
+    def _chrome_dialog_tick(self, dialog):
+        remaining = self._chrome_countdown_remaining
+        if remaining <= 0:
+            self._chrome_dialog_restart_now(dialog)
+            return
+        self._chrome_countdown_label.configure(
+            text=f"Reiniciando Chrome em {remaining}s...")
+        self._chrome_countdown_remaining -= 1
+        dialog.after(1000, lambda: self._chrome_dialog_tick(dialog))
+
+    def _chrome_dialog_restart_now(self, dialog):
+        """Restart Chrome with CDP and continue preparation."""
+        dialog.grab_release()
+        dialog.destroy()
+
+        self._setup_status_label.configure(text="Reiniciando Chrome com CDP...", text_color=YELLOW)
+        self.update_idletasks()
+
+        def _do_restart():
+            try:
+                from .cdp import restart_chrome_with_cdp
+                restart_chrome_with_cdp()
+                self.after(0, self._setup_prep_done)
+            except ImportError:
+                self.after(0, lambda: self._setup_prep_failed(
+                    "Modulo CDP nao disponivel"))
+            except Exception as e:
+                self.after(0, lambda: self._setup_prep_failed(str(e)))
+
+        threading.Thread(target=_do_restart, daemon=True).start()
+
     # ── RECORD PAGE ───────────────────────────────────────────────────
 
     def _build_record_page(self):
@@ -366,6 +726,11 @@ class ActionShotApp(ctk.CTk):
             self._nav_status.configure(text=f"{self.recorder.session.name}")
             self._load_steps()
             self._refresh_recent()
+
+            # If we have a scope, go to post-recording review
+            if self._current_scope is not None:
+                self._populate_review_post()
+                self._show_page("review_post")
         else:
             self._rec_label.configure(text="Clique para comecar a gravar.")
             self._rec_timer_label.configure(text="")
@@ -592,6 +957,297 @@ class ActionShotApp(ctk.CTk):
         for key, val in display.items():
             if val:
                 self._preview_meta.insert("end", f"{key}: {val}\n")
+
+    # ── REVIEW POST-RECORDING PAGE ──────────────────────────────────
+
+    def _build_review_post_page(self):
+        page = ctk.CTkFrame(self, fg_color=BG)
+        self._pages["review_post"] = page
+
+        scroll = ctk.CTkScrollableFrame(page, fg_color=BG)
+        scroll.pack(fill="both", expand=True)
+
+        # Header
+        ctk.CTkLabel(scroll, text="Revisao Pos-Gravacao",
+                     font=ctk.CTkFont(size=22, weight="bold"),
+                     text_color=TEXT).pack(anchor="w", padx=30, pady=(24, 4))
+        ctk.CTkLabel(scroll, text="Revise os aplicativos e dependencias detectados antes de salvar.",
+                     font=ctk.CTkFont(size=12), text_color=DIM).pack(anchor="w", padx=30, pady=(0, 16))
+
+        # Section 1 — Declared apps
+        sec1 = ctk.CTkFrame(scroll, fg_color=CARD, corner_radius=12)
+        sec1.pack(fill="x", padx=30, pady=(0, 12))
+        ctk.CTkLabel(sec1, text="Apps declarados",
+                     font=ctk.CTkFont(size=14, weight="bold"),
+                     text_color=TEXT).pack(anchor="w", padx=20, pady=(16, 8))
+        self._rp_declared_frame = ctk.CTkFrame(sec1, fg_color="transparent")
+        self._rp_declared_frame.pack(fill="x", padx=20, pady=(0, 16))
+
+        # Section 2 — Out-of-scope apps detected
+        sec2 = ctk.CTkFrame(scroll, fg_color=CARD, corner_radius=12)
+        sec2.pack(fill="x", padx=30, pady=(0, 12))
+        ctk.CTkLabel(sec2, text="Apps fora do escopo detectados",
+                     font=ctk.CTkFont(size=14, weight="bold"),
+                     text_color=YELLOW).pack(anchor="w", padx=20, pady=(16, 8))
+        ctk.CTkLabel(sec2, text="Esses aplicativos foram usados durante a gravacao mas nao estavam declarados.",
+                     font=ctk.CTkFont(size=11), text_color=DIM,
+                     wraplength=600).pack(anchor="w", padx=20, pady=(0, 4))
+        self._rp_outofscope_frame = ctk.CTkFrame(sec2, fg_color="transparent")
+        self._rp_outofscope_frame.pack(fill="x", padx=20, pady=(0, 16))
+
+        # Section 3 — Dependencies detected
+        sec3 = ctk.CTkFrame(scroll, fg_color=CARD, corner_radius=12)
+        sec3.pack(fill="x", padx=30, pady=(0, 12))
+        ctk.CTkLabel(sec3, text="Dependencias detectadas",
+                     font=ctk.CTkFont(size=14, weight="bold"),
+                     text_color=RED).pack(anchor="w", padx=20, pady=(16, 8))
+        self._rp_deps_frame = ctk.CTkFrame(sec3, fg_color="transparent")
+        self._rp_deps_frame.pack(fill="x", padx=20, pady=(0, 16))
+
+        # Section 4 — Time gaps
+        sec4 = ctk.CTkFrame(scroll, fg_color=CARD, corner_radius=12)
+        sec4.pack(fill="x", padx=30, pady=(0, 12))
+        ctk.CTkLabel(sec4, text="Intervalos de tempo",
+                     font=ctk.CTkFont(size=14, weight="bold"),
+                     text_color=BLUE).pack(anchor="w", padx=20, pady=(16, 8))
+        ctk.CTkLabel(sec4, text="Gaps maiores que 1 segundo entre passos consecutivos.",
+                     font=ctk.CTkFont(size=11), text_color=DIM).pack(anchor="w", padx=20, pady=(0, 4))
+        self._rp_gaps_frame = ctk.CTkFrame(sec4, fg_color="transparent")
+        self._rp_gaps_frame.pack(fill="x", padx=20, pady=(0, 16))
+
+        # Buttons
+        btn_frame = ctk.CTkFrame(scroll, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=30, pady=(8, 30))
+
+        ctk.CTkButton(btn_frame, text="Descartar gravacao", width=180, height=44,
+                      fg_color=RED, hover_color="#dc2626",
+                      font=ctk.CTkFont(size=13), corner_radius=10,
+                      command=self._rp_discard).pack(side="left", padx=(0, 12))
+
+        ctk.CTkButton(btn_frame, text="Salvar workflow", width=180, height=44,
+                      fg_color=GREEN, hover_color="#16a34a",
+                      font=ctk.CTkFont(size=14, weight="bold"), corner_radius=10,
+                      command=self._rp_save).pack(side="left")
+
+        # State for checkboxes
+        self._rp_declared_vars = {}
+        self._rp_outofscope_vars = {}
+        self._rp_dep_vars = {}
+
+    def _populate_review_post(self):
+        """Populate the review-post page with data from the recording session."""
+        # Clear previous content
+        for frame in (self._rp_declared_frame, self._rp_outofscope_frame,
+                      self._rp_deps_frame, self._rp_gaps_frame):
+            for w in frame.winfo_children():
+                w.destroy()
+
+        self._rp_declared_vars = {}
+        self._rp_outofscope_vars = {}
+        self._rp_dep_vars = {}
+
+        scope = self._current_scope
+        declared_apps = getattr(scope, "apps", []) if scope else []
+
+        # Section 1 — Declared apps (checked by default)
+        if declared_apps:
+            app_labels = {
+                "chrome": "Google Chrome",
+                "excel": "Microsoft Excel",
+                "word": "Microsoft Word",
+                "outlook": "Microsoft Outlook",
+                "generic": "Outro aplicativo Windows",
+            }
+            for app_id in declared_apps:
+                var = ctk.BooleanVar(value=True)
+                self._rp_declared_vars[app_id] = var
+                label = app_labels.get(app_id, app_id)
+                ctk.CTkCheckBox(
+                    self._rp_declared_frame, text=f"\u2713 {label}",
+                    variable=var, font=ctk.CTkFont(size=12),
+                    checkbox_width=20, checkbox_height=20,
+                    fg_color=GREEN, hover_color="#16a34a",
+                ).pack(anchor="w", pady=2)
+        else:
+            ctk.CTkLabel(self._rp_declared_frame, text="Nenhum app declarado.",
+                         text_color=MUTED, font=ctk.CTkFont(size=11)).pack(anchor="w")
+
+        # Analyze session for out-of-scope apps and time gaps
+        detected_processes = set()
+        step_timestamps = []
+
+        if self._steps:
+            for step in self._steps:
+                step_num = step.get("step", 0)
+                meta_path = os.path.join(self._session_path, f"{step_num:03d}_metadata.json")
+                if os.path.exists(meta_path):
+                    try:
+                        with open(meta_path, "r", encoding="utf-8") as f:
+                            meta = json.load(f)
+                        proc = meta.get("window", {}).get("process", "").lower()
+                        if proc:
+                            detected_processes.add(proc)
+                        ts = meta.get("timestamp", "")
+                        if ts:
+                            step_timestamps.append((step_num, ts))
+                    except Exception:
+                        pass
+
+        # Map declared apps to known process names
+        declared_procs = set()
+        proc_map = {
+            "chrome": {"chrome", "chrome.exe"},
+            "excel": {"excel", "excel.exe"},
+            "word": {"winword", "winword.exe"},
+            "outlook": {"outlook", "outlook.exe"},
+        }
+        for app_id in declared_apps:
+            if app_id in proc_map:
+                declared_procs.update(proc_map[app_id])
+
+        # Section 2 — Out-of-scope processes
+        out_of_scope = []
+        for proc in sorted(detected_processes):
+            proc_lower = proc.lower().replace(".exe", "")
+            is_declared = False
+            for app_id in declared_apps:
+                if app_id in proc_map and proc_lower in {p.replace(".exe", "") for p in proc_map[app_id]}:
+                    is_declared = True
+                    break
+                if app_id == "generic":
+                    is_declared = True
+                    break
+            if not is_declared and proc_lower not in ("actionshot", "python", "pythonw", ""):
+                out_of_scope.append(proc)
+
+        if out_of_scope:
+            for proc in out_of_scope:
+                var = ctk.BooleanVar(value=False)
+                self._rp_outofscope_vars[proc] = var
+                ctk.CTkCheckBox(
+                    self._rp_outofscope_frame,
+                    text=f"  {proc}  (adicionar ao escopo)",
+                    variable=var, font=ctk.CTkFont(size=12),
+                    checkbox_width=20, checkbox_height=20,
+                    fg_color=YELLOW, hover_color="#d97706",
+                ).pack(anchor="w", pady=2)
+        else:
+            ctk.CTkLabel(self._rp_outofscope_frame,
+                         text="Nenhum aplicativo fora do escopo detectado.",
+                         text_color=MUTED, font=ctk.CTkFont(size=11)).pack(anchor="w")
+
+        # Section 3 — Dependencies / warnings
+        deps = []
+        if "chrome" in declared_apps:
+            deps.append(("CDP ativo", "Chrome precisa estar em modo de depuracao (porta 9222)"))
+        if "excel" in declared_apps:
+            excel_file = getattr(scope, "excel_file", "")
+            if excel_file:
+                deps.append(("Arquivo Excel", f"Depende de: {os.path.basename(excel_file)}"))
+        if "word" in declared_apps:
+            word_file = getattr(scope, "word_file", "")
+            if word_file:
+                deps.append(("Arquivo Word", f"Depende de: {os.path.basename(word_file)}"))
+
+        if deps:
+            for dep_name, dep_desc in deps:
+                var = ctk.BooleanVar(value=False)
+                self._rp_dep_vars[dep_name] = var
+                row = ctk.CTkFrame(self._rp_deps_frame, fg_color="transparent")
+                row.pack(fill="x", pady=2)
+                ctk.CTkCheckBox(
+                    row, text="", variable=var,
+                    checkbox_width=20, checkbox_height=20,
+                    fg_color=RED, hover_color="#dc2626", width=24,
+                ).pack(side="left")
+                ctk.CTkLabel(row, text=f"\u26a0 {dep_name}: {dep_desc}",
+                             font=ctk.CTkFont(size=12), text_color=YELLOW).pack(side="left", padx=(4, 0))
+        else:
+            ctk.CTkLabel(self._rp_deps_frame,
+                         text="Nenhuma dependencia detectada.",
+                         text_color=MUTED, font=ctk.CTkFont(size=11)).pack(anchor="w")
+
+        # Section 4 — Time gaps > 1s
+        gaps = []
+        from datetime import datetime as _dt
+        sorted_ts = sorted(step_timestamps, key=lambda x: x[0])
+        for i in range(1, len(sorted_ts)):
+            prev_num, prev_ts = sorted_ts[i - 1]
+            curr_num, curr_ts = sorted_ts[i]
+            try:
+                # Try parsing ISO timestamps
+                t1 = _dt.fromisoformat(prev_ts)
+                t2 = _dt.fromisoformat(curr_ts)
+                gap = (t2 - t1).total_seconds()
+                if gap > 1.0:
+                    gaps.append((prev_num, curr_num, gap))
+            except Exception:
+                pass
+
+        if gaps:
+            for prev_num, curr_num, gap_sec in gaps:
+                gap_text = f"Passo {prev_num:03d} -> {curr_num:03d}: {gap_sec:.1f}s"
+                ctk.CTkLabel(self._rp_gaps_frame, text=f"  {gap_text}",
+                             font=ctk.CTkFont(size=12), text_color=DIM).pack(anchor="w", pady=1)
+        else:
+            ctk.CTkLabel(self._rp_gaps_frame,
+                         text="Nenhum intervalo significativo detectado.",
+                         text_color=MUTED, font=ctk.CTkFont(size=11)).pack(anchor="w")
+
+    def _rp_discard(self):
+        """Discard the recording."""
+        confirm = messagebox.askyesno(
+            "Descartar gravacao",
+            "Tem certeza que deseja descartar esta gravacao? Esta acao nao pode ser desfeita.")
+        if confirm:
+            if self._session_path and os.path.exists(self._session_path):
+                try:
+                    shutil.rmtree(self._session_path)
+                except Exception:
+                    pass
+            self._session_path = None
+            self._steps = []
+            self._current_scope = None
+            self._nav_status.configure(text="Nenhuma gravacao")
+            self._refresh_recent()
+            self._show_page("home")
+
+    def _rp_save(self):
+        """Save workflow with final scope (declared + user-added apps)."""
+        # Build final apps list
+        final_apps = []
+        for app_id, var in self._rp_declared_vars.items():
+            if var.get():
+                final_apps.append(app_id)
+        for proc, var in self._rp_outofscope_vars.items():
+            if var.get():
+                final_apps.append(proc)
+
+        # Save scope info to session
+        if self._session_path:
+            scope_data = {
+                "workflow_name": getattr(self._current_scope, "workflow_name", "workflow"),
+                "final_apps": final_apps,
+                "declared_apps": list(self._rp_declared_vars.keys()),
+                "added_apps": [p for p, v in self._rp_outofscope_vars.items() if v.get()],
+                "acknowledged_deps": [d for d, v in self._rp_dep_vars.items() if v.get()],
+            }
+            scope_path = os.path.join(self._session_path, "workflow_scope.json")
+            try:
+                with open(scope_path, "w", encoding="utf-8") as f:
+                    json.dump(scope_data, f, indent=2, ensure_ascii=False)
+            except Exception:
+                pass
+
+            # Also export session if export module available
+            try:
+                from .export import export_session
+                export_session(self._session_path, scope=scope_data)
+            except Exception:
+                pass
+
+        messagebox.showinfo("Salvo", "Workflow salvo com sucesso!")
+        self._show_page("review")
 
     # ── BUILDER PAGE (n8n-style visual workflow) ─────────────────────
 
