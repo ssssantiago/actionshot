@@ -1,8 +1,13 @@
 """Main recorder - listens to interactions and orchestrates capture via event queue."""
 
+import ctypes
+import ctypes.wintypes
 import json
+import os
 import queue
+import subprocess
 import threading
+import time
 from datetime import datetime
 
 from pynput import mouse, keyboard
@@ -22,10 +27,52 @@ except ImportError:
     _BROWSER_PROCESSES = set()
 
 
+def _get_foreground_process_name() -> str:
+    """Return the executable name (e.g. 'chrome.exe') of the foreground window."""
+    hwnd = ctypes.windll.user32.GetForegroundWindow()
+    if not hwnd:
+        return ""
+    pid = ctypes.wintypes.DWORD()
+    ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    if not pid.value:
+        return ""
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    handle = ctypes.windll.kernel32.OpenProcess(
+        PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value
+    )
+    if not handle:
+        return ""
+    try:
+        buf = ctypes.create_unicode_buffer(260)
+        size = ctypes.wintypes.DWORD(260)
+        ctypes.windll.kernel32.QueryFullProcessImageNameW(
+            handle, 0, buf, ctypes.byref(size)
+        )
+        return os.path.basename(buf.value)
+    finally:
+        ctypes.windll.kernel32.CloseHandle(handle)
+
+
+def _normalize_app_name(process_name: str) -> str:
+    """Derive a short app name from a process executable name."""
+    if not process_name:
+        return ""
+    name = process_name.lower().replace(".exe", "")
+    _MAP = {
+        "chrome": "chrome", "msedge": "edge", "brave": "brave",
+        "firefox": "firefox", "excel": "excel", "winword": "word",
+        "outlook": "outlook", "powerpnt": "powerpoint", "notepad": "notepad",
+        "code": "vscode", "explorer": "explorer",
+    }
+    return _MAP.get(name, name)
+
+
 class Recorder:
-    def __init__(self, output_dir="recordings", enable_video=False, enable_ocr=True,
-                 video_fps=10, image_format="jpeg", image_quality=85):
+    def __init__(self, output_dir="recordings", scope=None, enable_video=False,
+                 enable_ocr=True, video_fps=10, image_format="jpeg",
+                 image_quality=85):
         self.output_dir = output_dir
+        self.scope = scope  # WorkflowScope or None (None = legacy mode, capture everything as in_scope)
         self.session = None
         self.running = False
         self.enable_video = enable_video
@@ -74,16 +121,125 @@ class Recorder:
 
         self._paused = False
 
+    # ── Scope helpers ──────────────────────────────────────────────
+
+    def _resolve_scope(self) -> tuple:
+        """Return (process_name, app_name, in_scope) for the current foreground window.
+
+        When *scope* is ``None`` (legacy mode), ``in_scope`` is always ``True``.
+        Returns ``None`` instead of a tuple when the event should be skipped
+        entirely (blacklisted process).
+        """
+        process_name = _get_foreground_process_name()
+        app_name = _normalize_app_name(process_name)
+        if self.scope is not None:
+            if self.scope.is_blacklisted(process_name):
+                return None
+            in_scope = self.scope.is_in_scope(process_name)
+        else:
+            in_scope = True
+        return process_name, app_name, in_scope
+
+    def prepare_scope(self):
+        """Prepare declared apps before recording starts."""
+        if not self.scope:
+            return True
+
+        for app in self.scope.declared_apps:
+            if app == "chrome":
+                if not self._prepare_chrome():
+                    return False
+            elif app in ("excel", "word", "outlook"):
+                self._prepare_office_app(app)
+        return True
+
+    def _prepare_chrome(self) -> bool:
+        """Ensure Chrome is running with CDP enabled on port 9222."""
+        try:
+            from .cdp import ChromeCDP
+            cdp = ChromeCDP()
+            if cdp.is_available():
+                # CDP already reachable -- optionally navigate
+                if self.scope and getattr(self.scope, "chrome_url", None):
+                    cdp.connect()
+                    try:
+                        cdp.execute("Page.navigate", {"url": self.scope.chrome_url})
+                    finally:
+                        cdp.disconnect()
+                return True
+        except Exception:
+            pass
+
+        # Try launching Chrome with remote debugging
+        try:
+            chrome_paths = [
+                os.path.expandvars(r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
+                os.path.expandvars(r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"),
+                os.path.expandvars(r"%LocalAppData%\Google\Chrome\Application\chrome.exe"),
+            ]
+            chrome_exe = None
+            for p in chrome_paths:
+                if os.path.isfile(p):
+                    chrome_exe = p
+                    break
+            if not chrome_exe:
+                print("  [scope] Chrome executable not found")
+                return False
+
+            cmd = [chrome_exe, "--remote-debugging-port=9222"]
+            if self.scope and getattr(self.scope, "chrome_url", None):
+                cmd.append(self.scope.chrome_url)
+
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            time.sleep(2)  # Give Chrome time to start
+
+            from .cdp import ChromeCDP
+            cdp = ChromeCDP()
+            if cdp.is_available():
+                print("  [scope] Chrome launched with CDP on port 9222")
+                return True
+            else:
+                print("  [scope] Chrome launched but CDP not available")
+                return False
+        except Exception as e:
+            print(f"  [scope] Failed to launch Chrome: {e}")
+            return False
+
+    def _prepare_office_app(self, app: str):
+        """Open an Office application, optionally with a file from scope."""
+        exe_map = {
+            "excel": "excel.exe",
+            "word": "winword.exe",
+            "outlook": "outlook.exe",
+        }
+        exe = exe_map.get(app)
+        if not exe:
+            return
+        try:
+            cmd = [exe]
+            # If scope has a file for this app, pass it
+            app_file = getattr(self.scope, f"{app}_file", None) if self.scope else None
+            if app_file:
+                cmd.append(app_file)
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print(f"  [scope] Launched {app}")
+        except Exception as e:
+            print(f"  [scope] Failed to launch {app}: {e}")
+
+    # ── Start / Stop ─────────────────────────────────────────────
+
     def start(self):
         self.session = Session(self.output_dir)
         self.running = True
         self._paused = False
 
         mon_count = self._monitor_info.count()
+        scope_label = "ALL (legacy)" if self.scope is None else ", ".join(self.scope.declared_apps)
         print(f"\n  ActionShot recording started")
         print(f"  Session: {self.session.name}")
         print(f"  Output:  {self.session.path}")
         print(f"  Monitors: {mon_count}")
+        print(f"  Scope: {scope_label}")
         print(f"  Video: {'ON' if self.enable_video else 'OFF'}")
         print(f"  OCR: {'ON' if self.enable_ocr else 'OFF'}")
         print(f"  Format: {self.image_format.upper()} (q={self.image_quality})")
@@ -180,6 +336,15 @@ class Recorder:
             self._press_pos = (x, y)
         else:
             if self._drag_start:
+                # Resolve scope once for the release event
+                scope_info = self._resolve_scope()
+                if scope_info is None:
+                    # Blacklisted — discard
+                    self._drag_start = None
+                    self._press_pos = None
+                    return
+                process_name, app_name, in_scope = scope_info
+
                 sx, sy = self._drag_start
                 dist = ((x - sx) ** 2 + (y - sy) ** 2) ** 0.5
                 if dist > self._DRAG_THRESHOLD:
@@ -188,10 +353,12 @@ class Recorder:
                         "sx": sx, "sy": sy, "ex": x, "ey": y,
                         "button": button,
                         "timestamp": datetime.now().isoformat(),
+                        "process_name": process_name,
+                        "app_name": app_name,
+                        "in_scope": in_scope,
                     })
                 else:
                     # Rate limit clicks
-                    import time
                     now = time.monotonic()
                     if now - self._last_click_time < self._MIN_CLICK_INTERVAL:
                         self._drag_start = None
@@ -205,6 +372,9 @@ class Recorder:
                         "x": px, "y": py,
                         "button": button,
                         "timestamp": datetime.now().isoformat(),
+                        "process_name": process_name,
+                        "app_name": app_name,
+                        "in_scope": in_scope,
                     })
                 self._drag_start = None
                 self._press_pos = None
@@ -213,9 +383,20 @@ class Recorder:
         if not self.running or self._paused:
             return
 
+        # Scope check — resolve once for the first scroll in a batch
+        scope_info = self._resolve_scope()
+        if scope_info is None:
+            return  # blacklisted
+        process_name, app_name, in_scope = scope_info
+
         with self._scroll_lock:
             if self._scroll_buffer is None:
-                self._scroll_buffer = {"x": x, "y": y, "dx": dx, "dy": dy}
+                self._scroll_buffer = {
+                    "x": x, "y": y, "dx": dx, "dy": dy,
+                    "process_name": process_name,
+                    "app_name": app_name,
+                    "in_scope": in_scope,
+                }
             else:
                 self._scroll_buffer["dx"] += dx
                 self._scroll_buffer["dy"] += dy
@@ -241,11 +422,21 @@ class Recorder:
         if self._paused:
             return
 
+        # Scope check
+        scope_info = self._resolve_scope()
+        if scope_info is None:
+            return  # blacklisted
+
+        process_name, app_name, in_scope = scope_info
+
         with self._key_lock:
             if hasattr(key, "char") and key.char:
                 self._key_buffer.append(key.char)
             else:
                 self._key_buffer.append(f"[{key.name}]")
+
+            # Store latest scope info for when the buffer is flushed
+            self._key_scope_info = (process_name, app_name, in_scope)
 
             if self._key_timer:
                 self._key_timer.cancel()
@@ -282,6 +473,7 @@ class Recorder:
                 return
             keys = list(self._key_buffer)
             self._key_buffer.clear()
+            scope_info = getattr(self, "_key_scope_info", ("", "", True))
             if self._key_timer:
                 self._key_timer.cancel()
                 self._key_timer = None
@@ -289,10 +481,14 @@ class Recorder:
         if not keys:
             return
 
+        process_name, app_name, in_scope = scope_info
         self._event_queue.put({
             "type": "keypress",
             "keys": keys,
             "timestamp": datetime.now().isoformat(),
+            "process_name": process_name,
+            "app_name": app_name,
+            "in_scope": in_scope,
         })
 
     def _flush_scroll(self):
@@ -310,6 +506,9 @@ class Recorder:
             "x": data["x"], "y": data["y"],
             "dx": data["dx"], "dy": data["dy"],
             "timestamp": datetime.now().isoformat(),
+            "process_name": data.get("process_name", ""),
+            "app_name": data.get("app_name", ""),
+            "in_scope": data.get("in_scope", True),
         })
 
     # ── Event processors (run on worker thread) ───────────────────────
@@ -349,6 +548,8 @@ class Recorder:
         x, y = event["x"], event["y"]
         button = event["button"]
         timestamp = event["timestamp"]
+        in_scope = event.get("in_scope", True)
+        app_name = event.get("app_name", "")
 
         step_num = self.session.next_step()
         action = f"{button.name}_click"
@@ -389,6 +590,8 @@ class Recorder:
             "action": action,
             "position": {"x": x, "y": y},
             "description": description,
+            "in_scope": in_scope,
+            "app_name": app_name,
             "window": {
                 "title": window_info.get("window_title", ""),
                 "class": window_info.get("window_class", ""),
@@ -419,7 +622,8 @@ class Recorder:
             "timestamp": timestamp,
         })
 
-        print(f"  [{step_num:03d}] {description}")
+        scope_tag = "" if in_scope else " [out-of-scope]"
+        print(f"  [{step_num:03d}] {description}{scope_tag}")
 
     def _process_drag(self, event):
         self._flush_keys()
@@ -428,6 +632,8 @@ class Recorder:
         ex, ey = event["ex"], event["ey"]
         button = event["button"]
         timestamp = event["timestamp"]
+        in_scope = event.get("in_scope", True)
+        app_name = event.get("app_name", "")
 
         step_num = self.session.next_step()
         action = f"drag_{button.name}"
@@ -451,6 +657,8 @@ class Recorder:
             "drag_start": {"x": sx, "y": sy},
             "drag_end": {"x": ex, "y": ey},
             "description": description,
+            "in_scope": in_scope,
+            "app_name": app_name,
             "window": {
                 "title": window_info.get("window_title", ""),
                 "class": window_info.get("window_class", ""),
@@ -471,12 +679,15 @@ class Recorder:
             "timestamp": timestamp,
         })
 
-        print(f"  [{step_num:03d}] {description}")
+        scope_tag = "" if in_scope else " [out-of-scope]"
+        print(f"  [{step_num:03d}] {description}{scope_tag}")
 
     def _process_scroll(self, event):
         x, y = event["x"], event["y"]
         dx, dy = event["dx"], event["dy"]
         timestamp = event["timestamp"]
+        in_scope = event.get("in_scope", True)
+        app_name = event.get("app_name", "")
 
         step_num = self.session.next_step()
         action = "scroll"
@@ -503,6 +714,8 @@ class Recorder:
             "scroll_dy": dy,
             "direction": direction,
             "description": description,
+            "in_scope": in_scope,
+            "app_name": app_name,
             "window": {
                 "title": window_info.get("window_title", ""),
                 "class": window_info.get("window_class", ""),
@@ -523,11 +736,14 @@ class Recorder:
             "timestamp": timestamp,
         })
 
-        print(f"  [{step_num:03d}] {description}")
+        scope_tag = "" if in_scope else " [out-of-scope]"
+        print(f"  [{step_num:03d}] {description}{scope_tag}")
 
     def _process_keypress(self, event):
         keys = event["keys"]
         timestamp = event["timestamp"]
+        in_scope = event.get("in_scope", True)
+        app_name = event.get("app_name", "")
 
         step_num = self.session.next_step()
         ext = self._get_image_ext()
@@ -550,6 +766,8 @@ class Recorder:
             "keys": keys,
             "text": key_text,
             "description": description,
+            "in_scope": in_scope,
+            "app_name": app_name,
             "screenshot": f"{step_num:03d}_keypress.{ext}",
         }
 
@@ -564,4 +782,5 @@ class Recorder:
             "timestamp": timestamp,
         })
 
-        print(f"  [{step_num:03d}] {description}")
+        scope_tag = "" if in_scope else " [out-of-scope]"
+        print(f"  [{step_num:03d}] {description}{scope_tag}")
