@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Portal Juridico - Google Chrome</title>
+<style>
+  body { font-family: sans-serif; padding: 40px; max-width: 400px; margin: auto; }
+  input { display: block; width: 100%; padding: 8px; margin: 8px 0; font-size: 14px; }
+  button { padding: 10px 20px; font-size: 14px; cursor: pointer; }
+  #lblDashboard { display: none; margin-top: 20px; padding: 12px; background: #d4edda; color: #155724; }
+</style>
+</head>
+<body>
+  <h1>Portal Juridico</h1>
+  <label>Usuario</label>
+  <input id="txtUsuario" name="usuario" />
+  <label>Senha</label>
+  <input id="txtSenha" name="senha" type="password" />
+  <button id="btnEntrar" onclick="doLogin()">Entrar</button>
+  <div id="lblDashboard">Painel de Controle</div>
+  <script>
+    function doLogin() {
+      const u = document.getElementById('txtUsuario').value;
+      const p = document.getElementById('txtSenha').value;
+      if (u && p) {
+        setTimeout(() => {
+          document.getElementById('lblDashboard').style.display = 'block';
+        }, 800);
+      }
+    }
+  </script>
+</body>
+</html>
