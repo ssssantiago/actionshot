@@ -14,6 +14,13 @@ from .ocr import extract_text_around, HAS_TESSERACT
 from .monitor import MonitorInfo
 from .video import VideoRecorder
 
+try:
+    from .cdp import ChromeCDP, _BROWSER_PROCESSES
+    _HAS_CDP = True
+except ImportError:
+    _HAS_CDP = False
+    _BROWSER_PROCESSES = set()
+
 
 class Recorder:
     def __init__(self, output_dir="recordings", enable_video=False, enable_ocr=True,
@@ -356,6 +363,21 @@ class Recorder:
         element_type = element.get("control_type", "element")
         description = f"Clicked {element_type} '{element_name}' in '{window_info.get('window_title', 'unknown')}'"
 
+        # CDP verified CSS selector for browser processes
+        verified_css_selector = None
+        process_name = window_info.get("process_name", "").lower()
+        if _HAS_CDP and process_name in _BROWSER_PROCESSES:
+            try:
+                cdp = ChromeCDP()
+                if cdp.is_available():
+                    cdp.connect()
+                    try:
+                        verified_css_selector = cdp.get_verified_css_selector(x, y)
+                    finally:
+                        cdp.disconnect()
+            except Exception:
+                pass  # CDP failures must not break recording
+
         monitor = self._monitor_info.get_monitor_at(x, y)
 
         img_path = self.session.step_path(step_num, f"{action}.{ext}")
@@ -373,6 +395,10 @@ class Recorder:
                 "process": window_info.get("process_name", ""),
             },
             "element": element,
+            "verified_css_selector": verified_css_selector,
+            "selector": {
+                "css_selector": verified_css_selector,
+            },
             "monitor": monitor,
             "ocr_nearby": "",
             "screenshot": f"{step_num:03d}_{action}.{ext}",
