@@ -189,7 +189,11 @@ class _SelectorResolver:
                 "primary", "secondary", "tertiary", "fallback",
             ):
                 if key in spec and spec[key] is not None:
-                    ordered.append((key, spec[key]))
+                    # Skip selector dicts whose value is null/empty
+                    val = spec[key]
+                    if isinstance(val, dict) and val.get("value") is None:
+                        continue
+                    ordered.append((key, val))
             # Also accept a flat dict as a single selector
             if not ordered:
                 return [("primary", spec)]
@@ -236,6 +240,9 @@ class _SelectorResolver:
                     return self._by_uia_path(value, timeout=timeout)
 
             if method in ("css_selector", "xpath", "accessible_name"):
+                value = sel.get("value")
+                if value is None or value == "":
+                    raise LookupError("css_selector is null — skip to next level")
                 return self._resolve_web_selector(sel, timeout=timeout)
 
             if method == "ocr_anchor":
