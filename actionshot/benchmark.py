@@ -18,6 +18,13 @@ import re
 import time
 from typing import Any
 
+# Load .env if available
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 
 # ---------------------------------------------------------------------------
 # Difficulty levels
